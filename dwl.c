@@ -169,6 +169,11 @@ typedef struct {
 } Key;
 
 typedef struct {
+	int mode_index;
+	Key key;
+} Modekey;
+
+typedef struct {
 	struct wlr_keyboard_group *wlr_group;
 
 	int nsyms;
@@ -338,6 +343,7 @@ static void handlesig(int signo);
 static void incnmaster(const Arg *arg);
 static void inputdevice(struct wl_listener *listener, void *data);
 static int keybinding(uint32_t mods, xkb_keysym_t sym);
+static int modekeybinding(uint32_t mods, xkb_keysym_t sym);
 static void keypress(struct wl_listener *listener, void *data);
 static void keypressmod(struct wl_listener *listener, void *data);
 static int keyrepeat(void *data);
@@ -399,6 +405,7 @@ static Monitor *xytomon(double x, double y);
 static void xytonode(double x, double y, struct wlr_surface **psurface,
 		Client **pc, LayerSurface **pl, double *nx, double *ny);
 static void zoom(const Arg *arg);
+static void entermode(const Arg *arg);
 
 /* variables */
 static pid_t child_pid = -1;
@@ -465,6 +472,9 @@ static const struct wlr_buffer_impl buffer_impl = {
     .begin_data_ptr_access = bufdatabegin,
     .end_data_ptr_access = bufdataend,
 };
+
+static const int NORMAL = -1;
+static int active_mode_index = NORMAL;
 
 /* global event handlers */
 static struct wl_listener cursor_axis = {.notify = axisnotify};
@@ -1599,18 +1609,28 @@ drawbar(Monitor *m)
 	uint32_t i, occ = 0, urg = 0;
 	Client *c;
 	Buffer *buf;
+	char mode_text[256] = "";
+	int mode_width = 0;
+	int title_width;
+	int remaining;
+	int status_shown = 0;
 
 	if (!m->scene_buffer->node.enabled)
 		return;
 	if (!(buf = bufmon(m)))
 		return;
 
-	/* draw status first so it can be overdrawn by tags later */
-	if (m == selmon) { /* status is only drawn on selected monitor */
-		drwl_setscheme(m->drw, colors[SchemeNorm]);
-		tw = TEXTW(m, stext) - m->lrpad + 2; /* 2px right padding */
-		drwl_text(m->drw, m->b.width - tw, 0, tw, m->b.height, 0, stext, 0);
+	/* get current mode text if in a mode (not normal) */
+	if (active_mode_index >= 0 && active_mode_index < LENGTH(modes_labels) &&
+	    modes_labels[active_mode_index]) {
+		strncpy(mode_text, modes_labels[active_mode_index], sizeof(mode_text) - 1);
+		mode_text[sizeof(mode_text) - 1] = '\0';
+		mode_width = TEXTW(m, mode_text);
 	}
+
+	/* calculate status text width */
+	drwl_setscheme(m->drw, colors[SchemeNorm]);
+	tw = TEXTW(m, stext) - m->lrpad + 2;
 
 	wl_list_for_each(c, &clients, link) {
 		if (c->mon != m)
@@ -1621,6 +1641,8 @@ drawbar(Monitor *m)
 	}
 	x = 0;
 	c = focustop(m);
+
+	/* draw tags (always shown) */
 	for (i = 0; i < LENGTH(tags); i++) {
 		w = TEXTW(m, tags[i]);
 		drwl_setscheme(m->drw, colors[m->tagset[m->seltags] & 1 << i ? SchemeSel : SchemeNorm]);
@@ -1631,19 +1653,63 @@ drawbar(Monitor *m)
 				urg & 1 << i);
 		x += w;
 	}
+
+	/* draw mode indicator after tags if in a mode */
+	if (mode_text[0]) {
+		drwl_setscheme(m->drw, colors[SchemeSel]);
+		drwl_text(m->drw, x, 0, mode_width, m->b.height, m->lrpad / 2, mode_text, 0);
+		x += mode_width;
+	}
+
+	/* draw layout symbol after mode */
 	w = TEXTW(m, m->ltsymbol);
 	drwl_setscheme(m->drw, colors[SchemeNorm]);
-	x = drwl_text(m->drw, x, 0, w, m->b.height, m->lrpad / 2, m->ltsymbol, 0);
+	drwl_text(m->drw, x, 0, w, m->b.height, m->lrpad / 2, m->ltsymbol, 0);
+	x += w;
 
-	if ((w = m->b.width - tw - x) > m->b.height) {
-		if (c) {
-			drwl_setscheme(m->drw, colors[m == selmon ? SchemeSel : SchemeNorm]);
-			drwl_text(m->drw, x, 0, w, m->b.height, m->lrpad / 2, client_get_title(c), 0);
-			if (c && c->isfloating)
-				drwl_rect(m->drw, x + boxs, boxs, boxw, boxw, 0, 0);
-		} else {
+	remaining = m->b.width - x;
+
+	if (mode_text[0] && remaining >= tw) {
+		drwl_setscheme(m->drw, colors[SchemeNorm]);
+		drwl_text(m->drw, m->b.width - tw, 0, tw, m->b.height, 0, stext, 0);
+		remaining -= tw;
+		status_shown = 1;
+	}
+
+	title_width = remaining;
+
+	if (c && title_width > m->b.height) {
+		drwl_setscheme(m->drw, colors[m == selmon ? SchemeSel : SchemeNorm]);
+		drwl_text(m->drw, x, 0, title_width, m->b.height, m->lrpad / 2,
+		         client_get_title(c), 0);
+		if (c && c->isfloating)
+			drwl_rect(m->drw, x + boxs, boxs, boxw, boxw, 0, 0);
+	} else if (title_width > 0) {
+		drwl_setscheme(m->drw, colors[SchemeNorm]);
+		drwl_rect(m->drw, x, 0, title_width, m->b.height, 1, 1);
+	}
+
+	if (!mode_text[0]) {
+		/* not in a mode - normal behavior with status */
+		if (remaining >= tw) {
 			drwl_setscheme(m->drw, colors[SchemeNorm]);
-			drwl_rect(m->drw, x, 0, w, m->b.height, 1, 1);
+			drwl_text(m->drw, m->b.width - tw, 0, tw, m->b.height, 0, stext, 0);
+
+			int title_space = remaining - tw;
+			if (title_space > m->b.height && c) {
+				drwl_setscheme(m->drw, colors[m == selmon ? SchemeSel : SchemeNorm]);
+				drwl_text(m->drw, x, 0, title_space, m->b.height, m->lrpad / 2,
+				         client_get_title(c), 0);
+				if (c && c->isfloating)
+					drwl_rect(m->drw, x + boxs, boxs, boxw, boxw, 0, 0);
+			} else if (title_space > 0) {
+				drwl_setscheme(m->drw, colors[SchemeNorm]);
+				drwl_rect(m->drw, x, 0, title_space, m->b.height, 1, 1);
+			}
+		} else if (remaining > 0) {
+			drwl_setscheme(m->drw, colors[SchemeNorm]);
+			drwl_text(m->drw, m->b.width - remaining, 0, remaining, m->b.height, 0,
+			         stext, 0);
 		}
 	}
 
@@ -1882,6 +1948,11 @@ keybinding(uint32_t mods, xkb_keysym_t sym)
 	 * processing.
 	 */
 	const Key *k;
+
+	if (active_mode_index >= 0) {
+		return modekeybinding(mods, sym);
+	}
+
 	for (k = keys; k < END(keys); k++) {
 		if (CLEANMASK(mods) == CLEANMASK(k->mod)
 				&& xkb_keysym_to_lower(sym) == xkb_keysym_to_lower(k->keysym)
@@ -1892,6 +1963,30 @@ keybinding(uint32_t mods, xkb_keysym_t sym)
 	}
 	return 0;
 }
+
+int
+modekeybinding(uint32_t mods, xkb_keysym_t sym)
+{
+	int handled = 0;
+	const Modekey *mk;
+	const Key *k;
+
+	for (mk = modekeys; mk < END(modekeys); mk++) {
+		if (active_mode_index != mk->mode_index) {
+			continue;
+		}
+
+		k = &mk->key;
+		if (CLEANMASK(mods) == CLEANMASK(k->mod) &&
+				sym == k->keysym && k->func) {
+			k->func(&k->arg);
+			handled = 1;
+		}
+	}
+
+	return handled;
+}
+
 
 void
 keypress(struct wl_listener *listener, void *data)
@@ -2370,6 +2465,45 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 	 * wlroots makes this a no-op if surface is already focused */
 	wlr_seat_pointer_notify_enter(seat, surface, sx, sy);
 	wlr_seat_pointer_notify_motion(seat, time, sx, sy);
+}
+
+void
+printstatus(void)
+{
+	Monitor *m = NULL;
+	Client *c;
+	uint32_t occ, urg, sel;
+
+	wl_list_for_each(m, &mons, link) {
+		occ = urg = 0;
+		wl_list_for_each(c, &clients, link) {
+			if (c->mon != m)
+				continue;
+			occ |= c->tags;
+			if (c->isurgent)
+				urg |= c->tags;
+		}
+		if ((c = focustop(m))) {
+			printf("%s title %s\n", m->wlr_output->name, client_get_title(c));
+			printf("%s appid %s\n", m->wlr_output->name, client_get_appid(c));
+			printf("%s fullscreen %d\n", m->wlr_output->name, c->isfullscreen);
+			printf("%s floating %d\n", m->wlr_output->name, c->isfloating);
+			sel = c->tags;
+		} else {
+			printf("%s title \n", m->wlr_output->name);
+			printf("%s appid \n", m->wlr_output->name);
+			printf("%s fullscreen \n", m->wlr_output->name);
+			printf("%s floating \n", m->wlr_output->name);
+			sel = 0;
+		}
+
+		printf("%s selmon %u\n", m->wlr_output->name, m == selmon);
+		printf("%s tags %"PRIu32" %"PRIu32" %"PRIu32" %"PRIu32"\n",
+			m->wlr_output->name, occ, m->tagset[m->seltags], sel, urg);
+		printf("%s layout %s\n", m->wlr_output->name, m->ltsymbol);
+		printf("%s mode %s\n", m->wlr_output->name, modes_labels[active_mode_index] ? modes_labels[active_mode_index] : "");
+	}
+	fflush(stdout);
 }
 
 void
@@ -3449,6 +3583,14 @@ zoom(const Arg *arg)
 
 	focusclient(sel, 1);
 	arrange(selmon);
+}
+
+void
+entermode(const Arg *arg)
+{
+	active_mode_index = arg->i;
+	printstatus();
+    drawbars();
 }
 
 #ifdef XWAYLAND

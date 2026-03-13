@@ -23,6 +23,18 @@ static uint32_t colors[][3]                = {
 /* tagging */
 static char *tags[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
 
+enum {
+	floating,
+	wlrctl,
+	passthrough,
+};
+
+const char *modes_labels[] = {
+	"floating",
+    	"[hjkl]cursors [,]left [.]right [m]iddle ^[hjkl]arrows",
+    	"passthrough",
+};
+
 /* logging */
 static int log_level = WLR_ERROR;
 
@@ -162,6 +174,10 @@ static const Key keys[] = {
 	TAGKEYS(          XKB_KEY_9, XKB_KEY_parenleft,                     8),
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_q,           quit,             {0} },
 
+	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_f,           entermode,        {.i = floating} },
+	{ MODKEY,                    XKB_KEY_slash,       entermode,        {.i = wlrctl} },
+	{ MODKEY,		     XKB_KEY_Escape,      entermode,        {.i = passthrough} },
+
 	/* Ctrl-Alt-Backspace and Ctrl-Alt-Fx used to be handled by X server */
 	{ WLR_MODIFIER_CTRL|WLR_MODIFIER_ALT,XKB_KEY_Terminate_Server, quit, {0} },
 	/* Ctrl-Alt-Fx is used to switch to another VT, if you don't know what a VT is
@@ -170,6 +186,43 @@ static const Key keys[] = {
 #define CHVT(n) { WLR_MODIFIER_CTRL|WLR_MODIFIER_ALT,XKB_KEY_XF86Switch_VT_##n, chvt, {.ui = (n)} }
 	CHVT(1), CHVT(2), CHVT(3), CHVT(4), CHVT(5), CHVT(6),
 	CHVT(7), CHVT(8), CHVT(9), CHVT(10), CHVT(11), CHVT(12),
+};
+
+static const Modekey modekeys[] = {
+	/* mode   modifier              key                 function    	argument */
+	{ floating, { 0,                XKB_KEY_Escape,     entermode,		{.i = NORMAL} } },
+	{ floating, { 0,                XKB_KEY_space,      entermode,  	{.i = NORMAL} } },
+	{ floating, { MODKEY|WLR_MODIFIER_CTRL, XKB_KEY_f,  entermode,  	{.i = NORMAL} } },
+	{ floating, { 0,                XKB_KEY_h,          moveresizekb, 	{.v = (int []){ -50, 0, 0, 0 } } } },
+	{ floating, { 0,                XKB_KEY_j,          moveresizekb, 	{.v = (int []){ 0, 50, 0, 0 } } } },
+	{ floating, { 0,                XKB_KEY_k,          moveresizekb, 	{.v = (int []){ 0, -50, 0, 0 } } } },
+	{ floating, { 0,                XKB_KEY_l,          moveresizekb, 	{.v = (int []){ 50, 0, 0, 0 } } } },
+	{ floating, { 0,                XKB_KEY_y,          moveresizekb, 	{.v = (int []){ 0, 0, -50, 0 } } } },
+	{ floating, { 0,                XKB_KEY_u,          moveresizekb, 	{.v = (int []){ 0, 0, 0, 50 } } } },
+	{ floating, { 0,                XKB_KEY_i,          moveresizekb, 	{.v = (int []){ 0, 0, 0, -50 } } } },
+	{ floating, { 0,                XKB_KEY_o,          moveresizekb, 	{.v = (int []){ 0, 0, 50, 0 } } } },
+	{ wlrctl, { 0,                  XKB_KEY_Escape,     entermode,  	{.i = NORMAL} } },
+	{ wlrctl, { 0,                  XKB_KEY_space,      entermode,  	{.i = NORMAL} } },
+	{ wlrctl, { MODKEY,             XKB_KEY_slash,      entermode,  	{.i = NORMAL} } },
+	{ wlrctl, { 0,                  XKB_KEY_h,          spawn,      	SHCMD("wlrctl pointer move -90 0") } },
+	{ wlrctl, { 0,                  XKB_KEY_j,          spawn,      	SHCMD("wlrctl pointer move 0 90") } },
+	{ wlrctl, { 0,                  XKB_KEY_k,          spawn,      	SHCMD("wlrctl pointer move 0 -90") } },
+	{ wlrctl, { 0,                  XKB_KEY_l,          spawn,      	SHCMD("wlrctl pointer move 90 0") } },
+	{ wlrctl, { WLR_MODIFIER_SHIFT, XKB_KEY_H,          spawn,      	SHCMD("wlrctl pointer move -15 0") } },
+	{ wlrctl, { WLR_MODIFIER_SHIFT, XKB_KEY_J,          spawn,      	SHCMD("wlrctl pointer move 0 15") } },
+	{ wlrctl, { WLR_MODIFIER_SHIFT, XKB_KEY_K,          spawn,      	SHCMD("wlrctl pointer move 0 -15") } },
+	{ wlrctl, { WLR_MODIFIER_SHIFT, XKB_KEY_L,          spawn,      	SHCMD("wlrctl pointer move 15 0") } },
+	{ wlrctl, { 0,                  XKB_KEY_comma,      spawn,      	SHCMD("wlrctl pointer click left") } },
+	{ wlrctl, { 0,                  XKB_KEY_period,     spawn,      	SHCMD("wlrctl pointer click right") } },
+	{ wlrctl, { WLR_MODIFIER_SHIFT, XKB_KEY_less,       spawn,      	SHCMD("wlrctl pointer click left") } },
+	{ wlrctl, { WLR_MODIFIER_SHIFT, XKB_KEY_greater,    spawn,      	SHCMD("wlrctl pointer click right") } },
+	{ wlrctl, { WLR_MODIFIER_CTRL,  XKB_KEY_h,          spawn,      	SHCMD("wtype -k Left") } },
+	{ wlrctl, { WLR_MODIFIER_CTRL,  XKB_KEY_j,          spawn,      	SHCMD("wtype -k Down") } },
+	{ wlrctl, { WLR_MODIFIER_CTRL,  XKB_KEY_k,          spawn,      	SHCMD("wtype -k Up") } },
+	{ wlrctl, { WLR_MODIFIER_CTRL,  XKB_KEY_l,          spawn,      	SHCMD("wtype -k Right") } },
+	{ wlrctl, { 0,                  XKB_KEY_n,          spawn,      	SHCMD("wlrctl pointer scroll 30") } },
+	{ wlrctl, { 0,                  XKB_KEY_p,          spawn,      	SHCMD("wlrctl pointer scroll -30") } },
+	{ passthrough, { MODKEY|WLR_MODIFIER_SHIFT,         XKB_KEY_Escape,     entermode,  {.i = NORMAL} } },
 };
 
 static const Button buttons[] = {
