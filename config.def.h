@@ -42,10 +42,12 @@ const char *modes_labels[] = {
 static int log_level = WLR_ERROR;
 
 static const Rule rules[] = {
-	/* app_id             title       tags mask     isfloating   monitor */
-	{ "Gimp_EXAMPLE",     NULL,       0,            1,           -1 }, /* Start on currently visible tags floating, not tiled */
-	{ "firefox_EXAMPLE",  NULL,       1 << 8,       0,           -1 }, /* Start on ONLY tag "9" */
-    /* default/example rule: can be changed but cannot be eliminated; at least one rule must exist */
+	/* app_id             title       tags mask  isfloating monitor */
+	{ NULL,         "Floating_Term", 	0,	1,	-1 },
+	{ "file-*",           NULL,       	0,	1,	-1 },
+	{ NULL,		"Open Folder",       	0,	1,	-1 },
+	{ NULL,		"Open File",       	0,	1,	-1 },
+	{ "org.fcitx.fcitx5-config-qt", NULL, 	0,	1,	-1 },
 };
 
 /* layout(s) */
@@ -77,8 +79,8 @@ static const struct xkb_rule_names xkb_rules = {
 	.options = NULL,
 };
 
-static const int repeat_rate = 25;
-static const int repeat_delay = 600;
+static const int repeat_rate = 80;
+static const int repeat_delay = 300;
 
 /* Trackpad */
 static const int tap_to_click = 1;
@@ -125,10 +127,10 @@ static const enum libinput_config_tap_button_map button_map = LIBINPUT_CONFIG_TA
 
 static const int hide_cursor_when_typing = 1;
 
-static const int cursor_timeout = 5;
+static const int cursor_timeout = 3;
 
 /* If you want to use the windows key for MODKEY, use WLR_MODIFIER_LOGO */
-#define MODKEY WLR_MODIFIER_ALT
+#define MODKEY WLR_MODIFIER_LOGO
 
 #define TAGKEYS(KEY,SKEY,TAG) \
 	{ MODKEY,                    KEY,            view,            {.ui = 1 << TAG} }, \
@@ -141,7 +143,7 @@ static const int cursor_timeout = 5;
 
 /* commands */
 static const char *termcmd[] = { "foot", NULL };
-static const char *menucmd[] = { "wmenu-run", NULL };
+static const char *menucmd[] = { "wmenu-run -i", NULL };
 
 static const Key keys[] = {
 	/* Note that Shift changes certain key codes: 2 -> at, etc. */
@@ -181,6 +183,49 @@ static const Key keys[] = {
 	TAGKEYS(          XKB_KEY_8, XKB_KEY_asterisk,                      7),
 	TAGKEYS(          XKB_KEY_9, XKB_KEY_parenleft,                     8),
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_q,           quit,             {0} },
+
+	{ MODKEY,                    XKB_KEY_x,           spawn,            SHCMD("$BROWSER") },
+
+	{ MODKEY,                    XKB_KEY_minus,       spawn,            SHCMD("${HOME}/.local/bin/vol 2%-") },
+	{ MODKEY,                    XKB_KEY_equal,       spawn,            SHCMD("${HOME}/.local/bin/vol 2%+") },
+	{ MODKEY,                    XKB_KEY_BackSpace,   spawn,            SHCMD("${HOME}/.local/bin/vol mute") },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_minus,       spawn,            SHCMD("${HOME}/.local/bin/vol -m 2%-") },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_equal,       spawn,            SHCMD("${HOME}/.local/bin/vol -m 2%+") },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_BackSpace,   spawn,            SHCMD("${HOME}/.local/bin/vol -m mute") },
+
+	{ MODKEY,                    XKB_KEY_bracketleft, spawn,            SHCMD("${HOME}/.local/bin/bl 2%-") },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_braceleft,   spawn,            SHCMD("${HOME}/.local/bin/bl -e 2%-") },
+	{ MODKEY,                    XKB_KEY_bracketright,spawn,            SHCMD("${HOME}/.local/bin/bl 2%+") },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_braceright,  spawn,            SHCMD("${HOME}/.local/bin/bl -e 2%+") },
+
+	{ MODKEY|WLR_MODIFIER_SHIFT|WLR_MODIFIER_CTRL, XKB_KEY_L,   spawn,  SHCMD("waylock -ignore-empty-password -init-color 0x000000 -input-color 0x005577 -fail-color 0xcc3333") },
+
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_N,           spawn,            SHCMD("fnottctl dismiss") },
+
+	{ MODKEY,                    XKB_KEY_y,           spawn,            SHCMD("${HOME}/.local/bin/shot") },
+	{ MODKEY|WLR_MODIFIER_ALT,   XKB_KEY_y,           spawn,            SHCMD("${HOME}/.local/bin/shot --window") },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Y,           spawn,            SHCMD("${HOME}/.local/bin/shot --geo") },
+	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_y,           spawn,            SHCMD("${HOME}/.local/bin/shot --all") },
+	{ MODKEY|WLR_MODIFIER_SHIFT|WLR_MODIFIER_CTRL,  XKB_KEY_y,  spawn,  SHCMD("${HOME}/.local/bin/shot --show") },
+	{ MODKEY|WLR_MODIFIER_SHIFT|WLR_MODIFIER_CTRL,  XKB_KEY_w,  spawn,  SHCMD("${HOME}/.local/bin/rec") },
+
+	{ MODKEY,                    XKB_KEY_c,           spawn,            SHCMD("${HOME}/.local/bin/clip") },
+	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_c,           spawn,            SHCMD("cliphist wipe") },
+
+	{ MODKEY,                    XKB_KEY_a,           spawn,            SHCMD("${HOME}/.local/bin/bm") },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_A,           spawn,            SHCMD("${HOME}/.local/bin/bm -a") },
+
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_B,           spawn,            SHCMD("${HOME}/.local/bin/bt") },
+	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_B,		  spawn,            SHCMD("${HOME}/.local/bin/ef") },
+
+	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_p,		  spawn,            SHCMD("mpc toggle") },
+	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_bracketleft, spawn,            SHCMD("mpc prev") },
+	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_bracketright,spawn,            SHCMD("mpc next") },
+
+	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_w,           spawn,            SHCMD("${HOME}/.local/bin/passmenu --type") },
+
+	{ MODKEY|WLR_MODIFIER_SHIFT|WLR_MODIFIER_CTRL,  XKB_KEY_f,  spawn,  SHCMD("${HOME}/.local/bin/fztrans") },
+	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_t,        	  spawn,            SHCMD("footclient -T Floating_Term ${HOME}/.local/bin/fzkill") },
 
 	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_f,           entermode,        {.i = floating} },
 	{ MODKEY,                    XKB_KEY_slash,       entermode,        {.i = wlrctl} },
