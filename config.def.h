@@ -143,7 +143,7 @@ static const int cursor_timeout = 3;
 
 /* commands */
 static const char *termcmd[] = { "foot", NULL };
-static const char *menucmd[] = { "wmenu-run -i", NULL };
+static const char *menucmd[] = { "wmenu-run", "-i", NULL };
 
 static const Key keys[] = {
 	/* Note that Shift changes certain key codes: 2 -> at, etc. */
