@@ -33,9 +33,9 @@ enum {
 };
 
 const char *modes_labels[] = {
-	"floating",
-    	"[hjkl]cursors [,]left [.]right [m]iddle ^[hjkl]arrows",
-    	"passthrough",
+    "floating",
+    "[hjkl]cursors [,]left [.]right [m]iddle ^[hjkl]arrows",
+    "passthrough",
 };
 
 /* logging */
@@ -212,7 +212,6 @@ static const Key keys[] = {
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_N,           spawn,            SHCMD("fnottctl dismiss") },
 
 	{ MODKEY,                    XKB_KEY_y,           spawn,            SHCMD("${HOME}/.local/bin/shot") },
-	{ MODKEY|WLR_MODIFIER_ALT,   XKB_KEY_y,           spawn,            SHCMD("${HOME}/.local/bin/shot --window") },
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Y,           spawn,            SHCMD("${HOME}/.local/bin/shot --geo") },
 	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_y,           spawn,            SHCMD("${HOME}/.local/bin/shot --all") },
 	{ MODKEY|WLR_MODIFIER_SHIFT|WLR_MODIFIER_CTRL,  XKB_KEY_y,  spawn,  SHCMD("${HOME}/.local/bin/shot --show") },
@@ -225,20 +224,15 @@ static const Key keys[] = {
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_A,           spawn,            SHCMD("${HOME}/.local/bin/bm -a") },
 
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_B,           spawn,            SHCMD("${HOME}/.local/bin/bt") },
-	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_B,		  spawn,            SHCMD("${HOME}/.local/bin/ef") },
-
-	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_p,		  spawn,            SHCMD("mpc toggle") },
-	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_bracketleft, spawn,            SHCMD("mpc prev") },
-	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_bracketright,spawn,            SHCMD("mpc next") },
+	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_B,		      spawn,            SHCMD("${HOME}/.local/bin/ef") },
 
 	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_w,           spawn,            SHCMD("${HOME}/.local/bin/passmenu --type") },
 
-	{ MODKEY|WLR_MODIFIER_SHIFT|WLR_MODIFIER_CTRL,  XKB_KEY_f,  spawn,  SHCMD("${HOME}/.local/bin/fztrans") },
-	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_t,        	  spawn,            SHCMD("footclient -T Floating_Term ${HOME}/.local/bin/fzkill") },
+	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_t,        	  spawn,            SHCMD("footclient btop") },
 
 	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_f,           entermode,        {.i = floating} },
 	{ MODKEY,                    XKB_KEY_slash,       entermode,        {.i = wlrctl} },
-	{ MODKEY,		     XKB_KEY_Escape,      entermode,        {.i = passthrough} },
+    { MODKEY,                    XKB_KEY_Escape,      entermode,        {.i = passthrough} },
 
 	/* Ctrl-Alt-Backspace and Ctrl-Alt-Fx used to be handled by X server */
 	{ WLR_MODIFIER_CTRL|WLR_MODIFIER_ALT,XKB_KEY_Terminate_Server, quit, {0} },
