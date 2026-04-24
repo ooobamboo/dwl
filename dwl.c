@@ -384,7 +384,7 @@ static void resize(Client *c, struct wlr_box geo, int interact);
 static void run(char *startup_cmd);
 static void setcursor(struct wl_listener *listener, void *data);
 static void setcursorshape(struct wl_listener *listener, void *data);
-static void setfloating(Client *c, int floating);
+static void setfloating(Client *c, int isfloating);
 static void setfullscreen(Client *c, int fullscreen);
 static void setsticky(Client *c, int sticky);
 static void setlayout(const Arg *arg);
@@ -1088,12 +1088,6 @@ commitnotify(struct wl_listener *listener, void *data)
 	Client *c = wl_container_of(listener, c, commit);
 
 	if (c->surface.xdg->initial_commit) {
-		/*
-		 * Get the monitor this client will be rendered on
-		 * Note that if the user set a rule in which the client is placed on
-		 * a different monitor based on its title, this will likely select
-		 * a wrong monitor.
-		 */
 		applyrules(c);
 		if (c->mon) {
 			client_set_scale(client_surface(c), c->mon->wlr_output->scale);
@@ -1663,15 +1657,13 @@ drawbar(Monitor *m)
 	int mode_width = 0;
 	int title_width;
 	int remaining;
-	int status_shown = 0;
-
 	if (!m->scene_buffer->node.enabled)
 		return;
 	if (!(buf = bufmon(m)))
 		return;
 
 	/* get current mode text if in a mode (not normal) */
-	if (active_mode_index >= 0 && active_mode_index < LENGTH(modes_labels) &&
+	if (active_mode_index >= 0 && (size_t)active_mode_index < LENGTH(modes_labels) &&
 	    modes_labels[active_mode_index]) {
 		strncpy(mode_text, modes_labels[active_mode_index], sizeof(mode_text) - 1);
 		mode_text[sizeof(mode_text) - 1] = '\0';
@@ -1723,7 +1715,6 @@ drawbar(Monitor *m)
 		drwl_setscheme(m->drw, colors[SchemeNorm]);
 		drwl_text(m->drw, m->b.width - tw, 0, tw, m->b.height, 0, stext, 0);
 		remaining -= tw;
-		status_shown = 1;
 	}
 
 	title_width = remaining;
@@ -2977,10 +2968,10 @@ setcursorshape(struct wl_listener *listener, void *data)
 }
 
 void
-setfloating(Client *c, int floating)
+setfloating(Client *c, int isfloating)
 {
 	Client *p = client_get_parent(c);
-	c->isfloating = floating;
+	c->isfloating = isfloating;
 	/* If in floating layout do not change the client's layer */
 	if (!c->mon || !client_surface(c)->mapped || !c->mon->lt[c->mon->sellt]->arrange)
 		return;
