@@ -267,7 +267,7 @@ client_is_stopped(Client *c)
 		/* This process is not our child process, while is very unlikely that
 		 * it is stopped, in order to do not skip frames, assume that it is. */
 		if (errno == ECHILD)
-			return 1;
+			return 0;
 	} else if (in.si_pid) {
 		if (in.si_code == CLD_STOPPED || in.si_code == CLD_TRAPPED)
 			return 1;
