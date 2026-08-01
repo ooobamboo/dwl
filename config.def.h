@@ -198,8 +198,8 @@ static const Key keys[] = {
 	{ MODKEY,                    XKB_KEY_minus,       spawn,            SHCMD("${HOME}/.local/bin/vol 2%-") },
 	{ MODKEY,                    XKB_KEY_equal,       spawn,            SHCMD("${HOME}/.local/bin/vol 2%+") },
 	{ MODKEY,                    XKB_KEY_BackSpace,   spawn,            SHCMD("${HOME}/.local/bin/vol mute") },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_minus,       spawn,            SHCMD("${HOME}/.local/bin/vol -m 2%-") },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_equal,       spawn,            SHCMD("${HOME}/.local/bin/vol -m 2%+") },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_underscore,  spawn,            SHCMD("${HOME}/.local/bin/vol -m 2%-") },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_plus,        spawn,            SHCMD("${HOME}/.local/bin/vol -m 2%+") },
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_BackSpace,   spawn,            SHCMD("${HOME}/.local/bin/vol -m mute") },
 
 	{ MODKEY,                    XKB_KEY_bracketleft, spawn,            SHCMD("${HOME}/.local/bin/bl 2%-") },
