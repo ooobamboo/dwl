@@ -207,7 +207,7 @@ static const Key keys[] = {
 	{ MODKEY,                    XKB_KEY_bracketright,spawn,            SHCMD("${HOME}/.local/bin/bl 2%+") },
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_braceright,  spawn,            SHCMD("${HOME}/.local/bin/bl -e 2%+") },
 
-	{ MODKEY|WLR_MODIFIER_SHIFT|WLR_MODIFIER_CTRL, 	XKB_KEY_L,  spawn,  SHCMD("waylock -ignore-empty-password -init-color 0x000000 -input-color 0x005577 -fail-color 0xcc3333") },
+	{ MODKEY|WLR_MODIFIER_SHIFT|WLR_MODIFIER_CTRL, 	XKB_KEY_L,  spawn,  SHCMD("wlock") },
 
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_N,           spawn,            SHCMD("fnottctl dismiss") },
 
