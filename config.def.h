@@ -228,8 +228,6 @@ static const Key keys[] = {
 
 	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_w,           spawn,            SHCMD("${HOME}/.local/bin/passmenu --type") },
 
-	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_t,        	  spawn,            SHCMD("footclient btop") },
-
 	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_f,           entermode,        {.i = floating} },
 	{ MODKEY,                    XKB_KEY_slash,       entermode,        {.i = wlrctl} },
     { MODKEY,                    XKB_KEY_Escape,      entermode,        {.i = passthrough} },
