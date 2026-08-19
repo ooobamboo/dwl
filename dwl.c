@@ -1847,11 +1847,11 @@ focusclient(Client *c, int lift)
 	/* Change cursor surface */
 	motionnotify(0, NULL, 0, 0, 0, 0);
 
+	/* set text input focus */
+	input_method_relay_set_focus(input_method_relay, client_surface(c));
+
 	/* Have a client, so focus its top-level wlr_surface */
 	client_notify_enter(client_surface(c), wlr_seat_get_keyboard(seat));
-
-  	/* set text input focus */
-  	input_method_relay_set_focus(input_method_relay, client_surface(c));
 
 	/* Activate the new client */
 	client_activate_surface(client_surface(c), 1);
