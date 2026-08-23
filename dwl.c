@@ -229,6 +229,8 @@ struct Monitor {
 	struct wl_listener destroy_lock_surface;
 	struct wlr_session_lock_surface_v1 *lock_surface;
 	struct wlr_box m; /* monitor area, layout-relative */
+	struct wl_event_source *resize_timeout; /* ack backstop for a pending resize */
+	bool skip_resize; /* skipping frames while waiting for a resize ack */
 	struct {
 		int width, height;
 		int real_width, real_height; /* non-scaled */
@@ -378,6 +380,7 @@ static void powermgrsetmode(struct wl_listener *listener, void *data);
 static void quit(const Arg *arg);
 static void rendermon(struct wl_listener *listener, void *data);
 static void requestdecorationmode(struct wl_listener *listener, void *data);
+static int resizetimeout(void *data);
 static void requeststartdrag(struct wl_listener *listener, void *data);
 static void requestmonstate(struct wl_listener *listener, void *data);
 static void resize(Client *c, struct wlr_box geo, int interact);
@@ -1109,11 +1112,10 @@ commitnotify(struct wl_listener *listener, void *data)
 		return;
 	}
 
-	resize(c, c->geom, (c->isfloating && !c->isfullscreen));
-
 	/* mark a pending resize as completed */
 	if (c->resize && c->resize <= c->surface.xdg->current.configure_serial)
 		c->resize = 0;
+	resize(c, c->geom, (c->isfloating && !c->isfullscreen));
 }
 
 void
@@ -1316,6 +1318,8 @@ createmon(struct wl_listener *listener, void *data)
 	LISTEN(&wlr_output->events.frame, &m->frame, rendermon);
 	LISTEN(&wlr_output->events.destroy, &m->destroy, cleanupmon);
 	LISTEN(&wlr_output->events.request_state, &m->request_state, requestmonstate);
+	m->resize_timeout = wl_event_loop_add_timer(wl_display_get_event_loop(dpy),
+			resizetimeout, m);
 
 	wlr_output_state_set_enabled(&state, 1);
 	wlr_output_commit_state(wlr_output, &state);
@@ -2772,6 +2776,23 @@ quit(const Arg *arg)
 	wl_display_terminate(dpy);
 }
 
+int
+resizetimeout(void *data)
+{
+	Monitor *m = data;
+	Client *c;
+
+	/* A visible client hasn't acked its resize in time: give up waiting and
+	 * force rendering so we don't freeze the output. Clearing c->resize stops
+	 * rendermon() from skipping the next frames. */
+	wl_list_for_each(c, &clients, link)
+		if (c->mon == m)
+			c->resize = 0;
+	m->skip_resize = 0;
+	wlr_output_schedule_frame(m->wlr_output);
+	return 0;
+}
+
 void
 rendermon(struct wl_listener *listener, void *data)
 {
@@ -2782,12 +2803,22 @@ rendermon(struct wl_listener *listener, void *data)
 	struct wlr_output_state pending = {0};
 	struct timespec now;
 
-	/* Render if no XDG clients have an outstanding resize and are visible on
-	 * this monitor. */
+	/* Skip frames while an XDG client has an outstanding resize visible on
+	 * this monitor, to hide the flash of a wrong-sized buffer on fast
+	 * clients. The timer (armed once) bounds the skip so a client that never
+	 * acks its resize can't freeze the output. */
 	wl_list_for_each(c, &clients, link) {
-		if (c->resize && !c->isfloating && VISIBLEON(c, m) && !client_is_stopped(c))
+		if (c->resize && !c->isfloating && VISIBLEON(c, m) && !client_is_stopped(c)) {
+			if (!m->skip_resize) {
+				m->skip_resize = 1;
+				wl_event_source_timer_update(m->resize_timeout, 100);
+			}
 			goto skip;
+		}
 	}
+
+	m->skip_resize = 0;
+	wl_event_source_timer_update(m->resize_timeout, 0);
 
 	wlr_scene_output_commit(m->scene_output, NULL);
 
