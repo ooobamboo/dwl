@@ -13,6 +13,27 @@ philosophy. Like [dwm], dwl is:
 - One C source file configurable via `config.h`
 - Tied to as few external dependencies as possible
 
+## Patches
+
+This branch is upstream dwl plus the following patches:
+
+- **alwayscenter** — center floating windows
+- **bar** — dwm-style built-in bar (via [drwl])
+- **bar-modes** — show the active mode in the bar
+- **gaps** — gaps between windows
+- **hide-cursor-when-typing** — hide the cursor on keyboard input
+- **unclutter** — hide the cursor after a timeout
+- **modes** — modal keybindings
+- **moveresizekb** — move/resize floating windows with the keyboard
+- **pertag** — per-tag layout, mfact and nmaster
+- **regions** — pass window geometry to a program on stdin
+- **swapandfocusdir** — directional focus and swap
+
+Local modifications on top of the patches:
+
+- `regions` is renamed to `region` and only outputs the focused window, so it
+  can be piped directly to `grim -g -` to screenshot the focused window.
+
 ## Getting Started:
 
 ### Latest semi-stable [release]
@@ -203,6 +224,7 @@ Also, thanks to our current lead developers:
 [anopa]: https://jjacky.com/anopa/
 [dinit]: https://davmac.org/projects/dinit/
 [dwl-patches]: https://codeberg.org/dwl/dwl-patches
+[drwl]: https://codeberg.org/sewn/drwl
 [list of useful resources on our wiki]: https://codeberg.org/dwl/dwl/wiki/Home#migrating-from-x
 [main]: https://codeberg.org/dwl/dwl/src/branch/main
 [wlroots-next]: https://codeberg.org/dwl/dwl/src/branch/wlroots-next
