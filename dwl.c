@@ -107,7 +107,6 @@ typedef union {
 } Arg;
 
 typedef struct {
-	unsigned int click;
 	unsigned int mod;
 	unsigned int dir;
 	void (*func)(const Arg *);
@@ -115,6 +114,7 @@ typedef struct {
 } Axis;
 
 typedef struct {
+	unsigned int click;
 	unsigned int mod;
 	unsigned int button;
 	void (*func)(const Arg *);
@@ -397,7 +397,7 @@ static void resize(Client *c, struct wlr_box geo, int interact);
 static void run(char *startup_cmd);
 static void setcursor(struct wl_listener *listener, void *data);
 static void setcursorshape(struct wl_listener *listener, void *data);
-static void setfloating(Client *c, int floating);
+static void setfloating(Client *c, int isfloating);
 static void setfullscreen(Client *c, int fullscreen);
 static void setlayout(const Arg *arg);
 static void setmfact(const Arg *arg);
@@ -1763,7 +1763,7 @@ drawbar(Monitor *m)
 	int mode_width = 0;
 	int title_width;
 	int remaining;
-	int status_shown = 0;
+	int title_space;
 
 	if (!m->scene_buffer->node.enabled)
 		return;
@@ -1771,7 +1771,7 @@ drawbar(Monitor *m)
 		return;
 
 	/* get current mode text if in a mode (not normal) */
-	if (active_mode_index >= 0 && active_mode_index < LENGTH(modes_labels) &&
+	if (active_mode_index >= 0 && (size_t)active_mode_index < LENGTH(modes_labels) &&
 	    modes_labels[active_mode_index]) {
 		strncpy(mode_text, modes_labels[active_mode_index], sizeof(mode_text) - 1);
 		mode_text[sizeof(mode_text) - 1] = '\0';
@@ -1823,7 +1823,6 @@ drawbar(Monitor *m)
 		drwl_setscheme(m->drw, colors[SchemeNorm]);
 		drwl_text(m->drw, m->b.width - tw, 0, tw, m->b.height, 0, stext, 0);
 		remaining -= tw;
-		status_shown = 1;
 	}
 
 	title_width = remaining;
@@ -1845,7 +1844,7 @@ drawbar(Monitor *m)
 			drwl_setscheme(m->drw, colors[SchemeNorm]);
 			drwl_text(m->drw, m->b.width - tw, 0, tw, m->b.height, 0, stext, 0);
 
-			int title_space = remaining - tw;
+			title_space = remaining - tw;
 			if (title_space > m->b.height && c) {
 				drwl_setscheme(m->drw, colors[m == selmon ? SchemeSel : SchemeNorm]);
 				drwl_text(m->drw, x, 0, title_space, m->b.height, m->lrpad / 2,
@@ -2098,7 +2097,7 @@ focusdir(const Arg *arg)
 		c = client_in_direction("bottom", (int *)0);
 
 	if (c != NULL)
-		focusclient(c, 1);
+		focusclient(c, NULL, 1);
 }
 
 void
@@ -3028,10 +3027,10 @@ setcursorshape(struct wl_listener *listener, void *data)
 }
 
 void
-setfloating(Client *c, int floating)
+setfloating(Client *c, int isfloating)
 {
 	Client *p = client_get_parent(c);
-	c->isfloating = floating;
+	c->isfloating = isfloating;
 	/* If in floating layout do not change the client's layer */
 	if (!c->mon || !client_surface(c)->mapped || !c->mon->lt[c->mon->sellt]->arrange)
 		return;
@@ -3926,9 +3925,14 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 				!(node = wlr_scene_node_at(&layers[layer]->node, x, y, nx, ny)))
 			continue;
 
-		if (node->type == WLR_SCENE_NODE_BUFFER)
-			surface = wlr_scene_surface_try_from_buffer(
-					wlr_scene_buffer_from_node(node))->surface;
+		if (node->type == WLR_SCENE_NODE_BUFFER) {
+			struct wlr_scene_surface *scene_surface =
+				wlr_scene_surface_try_from_buffer(
+						wlr_scene_buffer_from_node(node));
+			if (!scene_surface)
+				continue;
+			surface = scene_surface->surface;
+		}
 	}
 
 	if (psurface) *psurface = surface;
