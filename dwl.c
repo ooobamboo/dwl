@@ -422,6 +422,7 @@ static Monitor *xytomon(double x, double y);
 static void xytonode(double x, double y, struct wlr_surface **psurface,
 		Client **pc, LayerSurface **pl, double *nx, double *ny);
 static void zoom(const Arg *arg);
+static void region(const Arg *arg);
 
 /* variables */
 static pid_t child_pid = -1;
@@ -3833,6 +3834,31 @@ zoom(const Arg *arg)
 
 	focusclient(sel, NULL, 1);
 	arrange(selmon);
+}
+
+void
+region(const Arg *arg)
+{
+	int pipefd[2];
+	Client *sel;
+
+	if (pipe(pipefd) == -1)
+		return;
+	if (fork() == 0) {
+		close(pipefd[1]);
+		dup2(pipefd[0], STDIN_FILENO);
+		close(pipefd[0]);
+		setsid();
+		execvp(((char **)arg->v)[0], (char **)arg->v);
+		die("dwl: execvp %s failed:", ((char **)arg->v)[0]);
+	}
+
+	close(pipefd[0]);
+	sel = focustop(selmon);
+	if (sel)
+		dprintf(pipefd[1], "%d,%d %dx%d\n",
+		        sel->geom.x, sel->geom.y, sel->geom.width, sel->geom.height);
+	close(pipefd[1]);
 }
 
 #ifdef XWAYLAND
