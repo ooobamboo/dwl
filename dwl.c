@@ -374,7 +374,7 @@ static Monitor *xytomon(double x, double y);
 static void xytonode(double x, double y, struct wlr_surface **psurface,
 		Client **pc, LayerSurface **pl, double *nx, double *ny);
 static void zoom(const Arg *arg);
-static void regions(const Arg *arg);
+static void region(const Arg *arg);
 
 /* variables */
 static pid_t child_pid = -1;
@@ -3285,11 +3285,10 @@ zoom(const Arg *arg)
 }
 
 void
-regions(const Arg *arg)
+region(const Arg *arg)
 {
 	int pipefd[2];
-	Client *c;
-	Monitor *m;
+	Client *sel;
 
 	if (pipe(pipefd) == -1)
 		return;
@@ -3303,11 +3302,10 @@ regions(const Arg *arg)
 	}
 
 	close(pipefd[0]);
-	wl_list_for_each(m, &mons, link)
-		wl_list_for_each(c, &clients, link)
-			if (VISIBLEON(c, m))
-				dprintf(pipefd[1], "%d,%d %dx%d\n",
-				        c->geom.x, c->geom.y, c->geom.width, c->geom.height);
+	sel = focustop(selmon);
+	if (sel)
+		dprintf(pipefd[1], "%d,%d %dx%d\n",
+		        sel->geom.x, sel->geom.y, sel->geom.width, sel->geom.height);
 	close(pipefd[1]);
 }
 
