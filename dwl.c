@@ -178,6 +178,11 @@ typedef struct {
 } Key;
 
 typedef struct {
+	int mode_index;
+	Key key;
+} Modekey;
+
+typedef struct {
 	struct wlr_keyboard_group *wlr_group;
 	struct wlr_keyboard *virtual_keyboard;
 
@@ -363,6 +368,7 @@ static void handlesig(int signo);
 static void incnmaster(const Arg *arg);
 static void inputdevice(struct wl_listener *listener, void *data);
 static const Key *keybinding(uint32_t mods, xkb_keysym_t sym);
+static const Key *modekeybinding(uint32_t mods, xkb_keysym_t sym);
 static void keypress(struct wl_listener *listener, void *data);
 static void keypressmod(struct wl_listener *listener, void *data);
 static int keyrepeat(void *data);
@@ -427,6 +433,7 @@ static void xytonode(double x, double y, struct wlr_surface **psurface,
 		Client **pc, LayerSurface **pl, double *nx, double *ny);
 static void zoom(const Arg *arg);
 static void region(const Arg *arg);
+static void entermode(const Arg *arg);
 
 /* variables */
 static pid_t child_pid = -1;
@@ -496,6 +503,9 @@ static struct wlr_box sgeom;
 static struct wl_list mons;
 static Monitor *selmon;
 static int consumed[KEY_MAX + 1];
+
+static const int NORMAL = -1;
+static int active_mode_index = NORMAL;
 
 static char stext[256];
 static struct wl_event_source *status_event_source;
@@ -2192,12 +2202,38 @@ keybinding(uint32_t mods, xkb_keysym_t sym)
 	 * processing.
 	 */
 	const Key *k;
+
+	if (active_mode_index >= 0) {
+		return modekeybinding(mods, sym);
+	}
+
 	for (k = keys; k < END(keys); k++) {
 		if (CLEANMASK(mods) == CLEANMASK(k->mod) && sym == k->keysym && k->func)
 			return k;
 	}
 	return NULL;
 }
+
+const Key *
+modekeybinding(uint32_t mods, xkb_keysym_t sym)
+{
+	const Modekey *mk;
+	const Key *k;
+
+	for (mk = modekeys; mk < END(modekeys); mk++) {
+		if (active_mode_index != mk->mode_index) {
+			continue;
+		}
+
+		k = &mk->key;
+		if (CLEANMASK(mods) == CLEANMASK(k->mod) &&
+				sym == k->keysym && k->func)
+			return k;
+	}
+
+	return NULL;
+}
+
 
 void
 keypress(struct wl_listener *listener, void *data)
@@ -3954,6 +3990,13 @@ trackcursorsurface(struct wlr_surface *surface)
 	last_cursor.surface = surface;
 	if (surface)
 		wl_signal_add(&surface->events.destroy, &last_cursor.surface_destroy);
+}
+
+void
+entermode(const Arg *arg)
+{
+	active_mode_index = arg->i;
+	drawbars();
 }
 
 #ifdef XWAYLAND
