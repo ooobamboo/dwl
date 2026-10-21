@@ -177,6 +177,7 @@ given the base on which it is built. Implemented default features are:
 - Support screen lockers via ext-session-lock-v1 protocol
 - Various Wayland protocols
 - XWayland support as provided by wlroots (can be enabled in `config.mk`)
+- Zero flickering - Wayland users naturally expect that "every frame is perfect"
 - Layer shell popups (used by Waybar)
 - Damage tracking provided by scenegraph API
 

@@ -324,19 +324,36 @@ client_set_scale(struct wlr_surface *s, float scale)
 	wlr_surface_set_preferred_buffer_scale(s, (int32_t)ceilf(scale));
 }
 
-static inline void
+/* Returns nonzero if the client has to commit a buffer with the new size */
+static inline uint32_t
 client_set_size(Client *c, uint32_t width, uint32_t height)
 {
 #ifdef XWAYLAND
 	if (client_is_x11(c)) {
 		wlr_xwayland_surface_configure(c->surface.xwayland,
 				c->geom.x + c->bw, c->geom.y + c->bw, width, height);
-		return;
+		return (int)width != client_surface(c)->current.width
+				|| (int)height != client_surface(c)->current.height;
 	}
 #endif
-	if ((int32_t)width != c->surface.xdg->toplevel->current.width
-			|| (int32_t)height != c->surface.xdg->toplevel->current.height)
-		wlr_xdg_toplevel_set_size(c->surface.xdg->toplevel, (int32_t)width, (int32_t)height);
+	if ((int32_t)width == c->surface.xdg->toplevel->scheduled.width
+			&& (int32_t)height == c->surface.xdg->toplevel->scheduled.height)
+		return 0;
+	return wlr_xdg_toplevel_set_size(c->surface.xdg->toplevel, (int32_t)width, (int32_t)height);
+}
+
+static inline void
+client_send_frame_done_iterator(struct wlr_surface *s, int sx, int sy, void *data)
+{
+	wlr_surface_send_frame_done(s, data);
+}
+
+static inline void
+client_send_frame_done(Client *c)
+{
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	wlr_surface_for_each_surface(client_surface(c), client_send_frame_done_iterator, &now);
 }
 
 static inline void

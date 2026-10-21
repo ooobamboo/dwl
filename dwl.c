@@ -135,6 +135,9 @@ typedef struct {
 	struct wl_list flink;
 	struct wlr_box geom; /* layout-relative, includes border */
 	struct wlr_box prev; /* layout-relative, includes border */
+	struct wlr_box current; /* geom currently shown in the scene graph */
+	struct wlr_scene_node *snapshot; /* content shown while resizing */
+	uint32_t resize_serial; /* nonzero while waiting for a resized buffer */
 	struct wlr_box bounds; /* only width and height are used */
 	union {
 		struct wlr_xdg_surface *xdg;
@@ -300,6 +303,7 @@ typedef struct {
 
 /* function declarations */
 static void applybounds(Client *c, struct wlr_box *bbox);
+static void applygeom(Client *c);
 static void applyrules(Client *c);
 static void arrange(Monitor *m);
 static void arrangelayer(Monitor *m, struct wl_list *list,
@@ -405,6 +409,8 @@ static void setmon(Client *c, Monitor *m, uint32_t newtags);
 static void setpsel(struct wl_listener *listener, void *data);
 static void setsel(struct wl_listener *listener, void *data);
 static void setup(void);
+static struct wlr_scene_node *snapshot(struct wlr_scene_node *node,
+		struct wlr_scene_tree *parent, void *data);
 static void spawn(const Arg *arg);
 static void startdrag(struct wl_listener *listener, void *data);
 static int statusin(int fd, unsigned int mask, void *data);
@@ -418,6 +424,11 @@ static void togglegaps(const Arg *arg);
 static void moveresizekb(const Arg *arg);
 static void toggletag(const Arg *arg);
 static void toggleview(const Arg *arg);
+static void transactionapply(void);
+static void transactioncheck(void *data);
+static void transactioncommit(Client *c, int ready);
+static void transactionschedule(void);
+static int transactiontimeout(void *data);
 static void unlocksession(struct wl_listener *listener, void *data);
 static void unmaplayersurfacenotify(struct wl_listener *listener, void *data);
 static void unmapnotify(struct wl_listener *listener, void *data);
@@ -516,6 +527,14 @@ static const struct wlr_buffer_impl buffer_impl = {
     .end_data_ptr_access = bufdataend,
 };
 
+/* Transactions: the scene graph is updated only once all visible clients have
+ * committed buffers with their new size, or after TRANSACTION_TIMEOUT ms */
+#define TRANSACTION_TIMEOUT 100
+static struct wl_event_source *transaction_idle;
+static struct wl_event_source *transaction_timer;
+static int transaction_waiting;
+static struct wl_array ghosts; /* struct wlr_scene_node *, unmapped clients */
+
 /* global event handlers */
 static struct wl_listener cursor_axis = {.notify = axisnotify};
 static struct wl_listener cursor_button = {.notify = buttonpress};
@@ -550,6 +569,7 @@ static struct wl_listener new_foreign_toplevel_capture_request = {.notify = capt
 #ifdef XWAYLAND
 static void activatex11(struct wl_listener *listener, void *data);
 static void associatex11(struct wl_listener *listener, void *data);
+static void commitx11(struct wl_listener *listener, void *data);
 static void configurex11(struct wl_listener *listener, void *data);
 static void createnotifyx11(struct wl_listener *listener, void *data);
 static void dissociatex11(struct wl_listener *listener, void *data);
@@ -609,6 +629,41 @@ applybounds(Client *c, struct wlr_box *bbox)
 }
 
 void
+applygeom(Client *c)
+{
+	struct wlr_box clip;
+	Client *p = client_get_parent(c);
+
+	/* We move all floating clients to LyrTile while in floating layout
+	 * to avoid "real" floating clients be always on top */
+	wlr_scene_node_reparent(&c->scene->node, layers[c->isfullscreen
+			|| (p && p->isfullscreen) ? LyrFS
+			: c->isfloating && c->mon->lt[c->mon->sellt]->arrange ? LyrFloat
+			: LyrTile]);
+
+	c->current = c->geom;
+	if (c->snapshot) {
+		wlr_scene_node_destroy(c->snapshot);
+		c->snapshot = NULL;
+		wlr_scene_node_set_enabled(&c->scene_surface->node, 1);
+	}
+
+	/* Update scene-graph, including borders */
+	wlr_scene_node_set_position(&c->scene->node, c->geom.x, c->geom.y);
+	wlr_scene_node_set_position(&c->scene_surface->node, c->bw, c->bw);
+	wlr_scene_rect_set_size(c->border[0], c->geom.width, c->bw);
+	wlr_scene_rect_set_size(c->border[1], c->geom.width, c->bw);
+	wlr_scene_rect_set_size(c->border[2], c->bw, c->geom.height - 2 * c->bw);
+	wlr_scene_rect_set_size(c->border[3], c->bw, c->geom.height - 2 * c->bw);
+	wlr_scene_node_set_position(&c->border[1]->node, 0, c->geom.height - c->bw);
+	wlr_scene_node_set_position(&c->border[2]->node, 0, c->bw);
+	wlr_scene_node_set_position(&c->border[3]->node, c->geom.width - c->bw, c->bw);
+
+	client_get_clip(c, &clip);
+	wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
+}
+
+void
 applyrules(Client *c)
 {
 	/* rule matching */
@@ -647,37 +702,18 @@ arrange(Monitor *m)
 		return;
 
 	wl_list_for_each(c, &clients, link) {
-		if (c->mon == m) {
-			wlr_scene_node_set_enabled(&c->scene->node, VISIBLEON(c, m));
+		if (c->mon == m)
 			client_set_suspended(c, !VISIBLEON(c, m)
 					&& (!c->image_capture_source
 					|| wl_list_empty(&c->image_capture_source->resources)));
-		}
 	}
-
-	wlr_scene_node_set_enabled(&m->fullscreen_bg->node,
-			(c = focustop(m)) && c->isfullscreen);
 
 	strncpy(m->ltsymbol, m->lt[m->sellt]->symbol, sizeof(m->ltsymbol));
 
-	/* We move all clients (except fullscreen and unmanaged) to LyrTile while
-	 * in floating layout to avoid "real" floating clients be always on top */
-	wl_list_for_each(c, &clients, link) {
-		if (c->mon != m || c->scene->node.parent == layers[LyrFS])
-			continue;
-
-		wlr_scene_node_reparent(&c->scene->node,
-				(!m->lt[m->sellt]->arrange && c->isfloating)
-						? layers[LyrTile]
-						: (m->lt[m->sellt]->arrange && c->isfloating)
-								? layers[LyrFloat]
-								: c->scene->node.parent);
-	}
-
 	if (m->lt[m->sellt]->arrange)
 		m->lt[m->sellt]->arrange(m);
-	motionnotify(0, NULL, 0, 0, 0, 0);
-	checkidleinhibitor(NULL);
+
+	transactionschedule();
 }
 
 void
@@ -1012,6 +1048,11 @@ cleanup(void)
 	 * Destroy it until it's fixed on the wlroots side */
 	wlr_backend_destroy(backend);
 
+	if (transaction_idle)
+		wl_event_source_remove(transaction_idle);
+	wl_event_source_remove(transaction_timer);
+	wl_array_release(&ghosts);
+
 	wl_display_destroy(dpy);
 	/* Destroy after the wayland display (when the monitors are already destroyed)
 	   to avoid destroying them with an invalid scene output. */
@@ -1203,6 +1244,8 @@ commitnotify(struct wl_listener *listener, void *data)
 		return;
 	}
 
+	transactioncommit(c, c->resize_serial && c->surface.xdg->current.configure_serial
+			>= c->resize_serial);
 	resize(c, c->geom, (c->isfloating && !c->isfullscreen));
 }
 
@@ -2899,7 +2942,7 @@ void
 resize(Client *c, struct wlr_box geo, int interact)
 {
 	struct wlr_box *bbox;
-	struct wlr_box clip;
+	uint32_t serial;
 
 	if (!c->mon || !client_surface(c)->mapped)
 		return;
@@ -2910,20 +2953,27 @@ resize(Client *c, struct wlr_box geo, int interact)
 	c->geom = geo;
 	applybounds(c, bbox);
 
-	/* Update scene-graph, including borders */
-	wlr_scene_node_set_position(&c->scene->node, c->geom.x, c->geom.y);
-	wlr_scene_node_set_position(&c->scene_surface->node, c->bw, c->bw);
-	wlr_scene_rect_set_size(c->border[0], c->geom.width, c->bw);
-	wlr_scene_rect_set_size(c->border[1], c->geom.width, c->bw);
-	wlr_scene_rect_set_size(c->border[2], c->bw, c->geom.height - 2 * c->bw);
-	wlr_scene_rect_set_size(c->border[3], c->bw, c->geom.height - 2 * c->bw);
-	wlr_scene_node_set_position(&c->border[1]->node, 0, c->geom.height - c->bw);
-	wlr_scene_node_set_position(&c->border[2]->node, 0, c->bw);
-	wlr_scene_node_set_position(&c->border[3]->node, c->geom.width - c->bw, c->bw);
+	if ((serial = client_set_size(c, c->geom.width - 2 * c->bw,
+			c->geom.height - 2 * c->bw)))
+		c->resize_serial = serial;
 
-	client_set_size(c, c->geom.width - 2 * c->bw, c->geom.height - 2 * c->bw);
-	client_get_clip(c, &clip);
-	wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
+	if (interact || (!c->resize_serial && wlr_box_equal(&c->geom, &c->current))) {
+		c->resize_serial = 0;
+		applygeom(c);
+		return;
+	}
+
+	/* Until the transaction is applied, keep showing the current content
+	 * instead of buffers with the new size at the old position. */
+	if (c->resize_serial) {
+		if (!c->snapshot && c->scene->node.enabled
+				&& (c->snapshot = snapshot(&c->scene_surface->node, c->scene, c)))
+			wlr_scene_node_set_enabled(&c->scene_surface->node, 0);
+		/* The scene graph doesn't send frame done events to hidden
+		 * surfaces, but the client may be waiting for one to redraw */
+		client_send_frame_done(c);
+	}
+	transactionschedule();
 }
 
 void
@@ -3029,14 +3079,10 @@ setcursorshape(struct wl_listener *listener, void *data)
 void
 setfloating(Client *c, int isfloating)
 {
-	Client *p = client_get_parent(c);
 	c->isfloating = isfloating;
 	/* If in floating layout do not change the client's layer */
 	if (!c->mon || !client_surface(c)->mapped || !c->mon->lt[c->mon->sellt]->arrange)
 		return;
-	wlr_scene_node_reparent(&c->scene->node, layers[c->isfullscreen ||
-			(p && p->isfullscreen) ? LyrFS
-			: c->isfloating ? LyrFloat : LyrTile]);
 	arrange(c->mon);
 	drawbars();
 }
@@ -3049,8 +3095,6 @@ setfullscreen(Client *c, int fullscreen)
 		return;
 	c->bw = fullscreen ? 0 : borderpx;
 	client_set_fullscreen(c, fullscreen);
-	wlr_scene_node_reparent(&c->scene->node, layers[c->isfullscreen
-			? LyrFS : c->isfloating ? LyrFloat : LyrTile]);
 
 	if (fullscreen) {
 		c->prev = c->geom;
@@ -3257,6 +3301,9 @@ setup(void)
 	wl_list_init(&clients);
 	wl_list_init(&fstack);
 
+	transaction_timer = wl_event_loop_add_timer(event_loop, transactiontimeout, NULL);
+	wl_array_init(&ghosts);
+
 	xdg_shell = wlr_xdg_shell_create(dpy, 6);
 	wl_signal_add(&xdg_shell->events.new_toplevel, &new_xdg_toplevel);
 	wl_signal_add(&xdg_shell->events.new_popup, &new_xdg_popup);
@@ -3383,6 +3430,57 @@ setup(void)
 		fprintf(stderr, "failed to setup XWayland X server, continuing without it\n");
 	}
 #endif
+}
+
+struct wlr_scene_node *
+snapshot(struct wlr_scene_node *node, struct wlr_scene_tree *parent, void *data)
+{
+	/* Copy the visible part of a scene graph subtree, keeping references to
+	 * the buffers so that they can be shown after the client changes them */
+	struct wlr_scene_node *child, *copy;
+	struct wlr_scene_tree *tree;
+	struct wlr_scene_rect *rect;
+	struct wlr_scene_buffer *src, *buffer;
+
+	if (!node->enabled)
+		return NULL;
+
+	switch (node->type) {
+	case WLR_SCENE_NODE_TREE:
+		tree = wlr_scene_tree_create(parent);
+		wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link)
+			snapshot(child, tree, data);
+		copy = &tree->node;
+		break;
+	case WLR_SCENE_NODE_RECT:
+		rect = wlr_scene_rect_from_node(node);
+		copy = &wlr_scene_rect_create(parent, rect->width, rect->height, rect->color)->node;
+		break;
+	case WLR_SCENE_NODE_BUFFER:
+		src = wlr_scene_buffer_from_node(node);
+		buffer = wlr_scene_buffer_create(parent, NULL);
+		wlr_scene_buffer_set_dest_size(buffer, src->dst_width, src->dst_height);
+		wlr_scene_buffer_set_opaque_region(buffer, &src->opaque_region);
+		wlr_scene_buffer_set_opacity(buffer, src->opacity);
+		wlr_scene_buffer_set_filter_mode(buffer, src->filter_mode);
+		wlr_scene_buffer_set_transfer_function(buffer, src->transfer_function);
+		wlr_scene_buffer_set_primaries(buffer, src->primaries);
+		wlr_scene_buffer_set_color_encoding(buffer, src->color_encoding);
+		wlr_scene_buffer_set_color_range(buffer, src->color_range);
+		wlr_scene_buffer_set_source_box(buffer, &src->src_box);
+		wlr_scene_buffer_set_transform(buffer, src->transform);
+		wlr_scene_buffer_set_buffer(buffer, src->buffer);
+		copy = &buffer->node;
+		break;
+	default:
+		return NULL;
+	}
+
+	copy->data = data;
+	wlr_scene_node_set_position(copy, node->x, node->y);
+	if (node->parent == parent)
+		wlr_scene_node_place_above(copy, node);
+	return copy;
 }
 
 void
@@ -3598,6 +3696,88 @@ toggleview(const Arg *arg)
 }
 
 void
+transactionapply(void)
+{
+	struct wlr_scene_node **ghost;
+	Client *c;
+	Monitor *m;
+
+	wl_event_source_timer_update(transaction_timer, 0);
+	transaction_waiting = 0;
+
+	wl_array_for_each(ghost, &ghosts)
+		wlr_scene_node_destroy(*ghost);
+	ghosts.size = 0;
+
+	wl_list_for_each(c, &clients, link) {
+		c->resize_serial = 0;
+		if (!c->mon)
+			continue;
+		if (c->mon->wlr_output->enabled)
+			wlr_scene_node_set_enabled(&c->scene->node, VISIBLEON(c, c->mon));
+		applygeom(c);
+	}
+
+	wl_list_for_each(m, &mons, link) {
+		if (m->wlr_output->enabled)
+			wlr_scene_node_set_enabled(&m->fullscreen_bg->node,
+					(c = focustop(m)) && c->isfullscreen);
+	}
+
+	motionnotify(0, NULL, 0, 0, 0, 0);
+	checkidleinhibitor(NULL);
+}
+
+void
+transactioncheck(void *data)
+{
+	Client *c;
+
+	transaction_idle = NULL;
+
+	/* Hidden clients don't have to redraw before the layout is shown */
+	wl_list_for_each(c, &clients, link) {
+		if (c->resize_serial && VISIBLEON(c, c->mon) && c->mon->wlr_output->enabled) {
+			if (!transaction_waiting) {
+				/* Don't restart the timer on updates of the pending
+				 * layout, so the delay is bounded */
+				wl_event_source_timer_update(transaction_timer, TRANSACTION_TIMEOUT);
+				transaction_waiting = 1;
+			}
+			return;
+		}
+	}
+
+	transactionapply();
+}
+
+void
+transactioncommit(Client *c, int ready)
+{
+	if (c->resize_serial && ready) {
+		c->resize_serial = 0;
+		transactionschedule();
+	} else if (c->snapshot) {
+		/* This buffer is not shown, let the client draw again */
+		client_send_frame_done(c);
+	}
+}
+
+void
+transactionschedule(void)
+{
+	if (!transaction_idle)
+		transaction_idle = wl_event_loop_add_idle(event_loop, transactioncheck, NULL);
+}
+
+int
+transactiontimeout(void *data)
+{
+	transactionapply();
+	return 0;
+}
+
+void
 unlocksession(struct wl_listener *listener, void *data)
 {
 	SessionLock *lock = wl_container_of(listener, lock, unlock);
@@ -3623,6 +3803,7 @@ unmapnotify(struct wl_listener *listener, void *data)
 {
 	/* Called when the surface is unmapped, and should no longer be shown. */
 	Client *c = wl_container_of(listener, c, unmap);
+	struct wlr_scene_node *ghost, **slot;
 	if (c == grabc) {
 		cursor_mode = CurNormal;
 		grabc = NULL;
@@ -3631,6 +3812,15 @@ unmapnotify(struct wl_listener *listener, void *data)
 		focused_client = NULL;
 
 	if (!client_is_unmanaged(c)) {
+		/* Keep showing the client until the transaction rearranging the
+		 * remaining ones is applied, to not show a gap */
+		if ((ghost = snapshot(&c->scene->node, c->scene->node.parent, NULL))) {
+			if ((slot = wl_array_add(&ghosts, sizeof(ghost))))
+				*slot = ghost;
+			else
+				wlr_scene_node_destroy(ghost);
+			transactionschedule();
+		}
 		wl_list_remove(&c->link);
 		setmon(c, NULL, 0);
 		wl_list_remove(&c->flink);
@@ -3654,6 +3844,9 @@ unmapnotify(struct wl_listener *listener, void *data)
 	c->image_capture_source = NULL;
 	wlr_scene_node_destroy(&c->scene->node);
 	client_surface(c)->data = NULL;
+	c->snapshot = NULL;
+	c->resize_serial = 0;
+	c->current = (struct wlr_box){0};
 	drawbars();
 	motionnotify(0, NULL, 0, 0, 0, 0);
 }
@@ -3916,26 +4109,26 @@ xytonode(double x, double y, struct wlr_surface **psurface,
 		Client **pc, LayerSurface **pl, double *nx, double *ny)
 {
 	struct wlr_scene_node *node;
+	struct wlr_scene_surface *scene_surface;
 	struct wlr_surface *surface = NULL;
-
+	Client *c = NULL;
 	int layer;
 
-	for (layer = NUM_LAYERS - 1; !surface && layer >= (locked ? LyrBlock : 0); layer--) {
+	for (layer = NUM_LAYERS - 1; !surface && !c && layer >= (locked ? LyrBlock : 0); layer--) {
 		if (layer == LyrIMPopup ||
-				!(node = wlr_scene_node_at(&layers[layer]->node, x, y, nx, ny)))
+				!(node = wlr_scene_node_at(&layers[layer]->node, x, y, nx, ny))
+				|| node->type != WLR_SCENE_NODE_BUFFER)
 			continue;
 
-		if (node->type == WLR_SCENE_NODE_BUFFER) {
-			struct wlr_scene_surface *scene_surface =
-				wlr_scene_surface_try_from_buffer(
-						wlr_scene_buffer_from_node(node));
-			if (!scene_surface)
-				continue;
+		if ((scene_surface = wlr_scene_surface_try_from_buffer(
+				wlr_scene_buffer_from_node(node))))
 			surface = scene_surface->surface;
-		}
+		else /* snapshot of a client during a transaction */
+			c = node->data;
 	}
 
 	if (psurface) *psurface = surface;
+	if (pc) *pc = c;
 	toplevel_from_wlr_surface(surface, pc, pl);
 }
 
@@ -4075,8 +4268,19 @@ associatex11(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, associate);
 
+	LISTEN(&client_surface(c)->events.commit, &c->commit, commitx11);
 	LISTEN(&client_surface(c)->events.map, &c->map, mapnotify);
 	LISTEN(&client_surface(c)->events.unmap, &c->unmap, unmapnotify);
+}
+
+void
+commitx11(struct wl_listener *listener, void *data)
+{
+	Client *c = wl_container_of(listener, c, commit);
+	struct wlr_surface *surface = client_surface(c);
+
+	transactioncommit(c, surface->current.width == c->geom.width - 2 * (int)c->bw
+			&& surface->current.height == c->geom.height - 2 * (int)c->bw);
 }
 
 void
@@ -4127,6 +4331,7 @@ void
 dissociatex11(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, dissociate);
+	wl_list_remove(&c->commit.link);
 	wl_list_remove(&c->map.link);
 	wl_list_remove(&c->unmap.link);
 }
