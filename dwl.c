@@ -382,6 +382,7 @@ static void mapnotify(struct wl_listener *listener, void *data);
 static void maximizenotify(struct wl_listener *listener, void *data);
 static void monocle(Monitor *m);
 static void motionabsolute(struct wl_listener *listener, void *data);
+static char **monoff(struct wlr_output *wlr_output);
 static void motionnotify(uint32_t time, struct wlr_input_device *device, double sx,
 		double sy, double sx_unaccel, double sy_unaccel);
 static void motionrelative(struct wl_listener *listener, void *data);
@@ -406,6 +407,7 @@ static void setfullscreen(Client *c, int fullscreen);
 static void setlayout(const Arg *arg);
 static void setmfact(const Arg *arg);
 static void setmon(Client *c, Monitor *m, uint32_t newtags);
+static void setmonoff(struct wlr_output *wlr_output, int off);
 static void setpsel(struct wl_listener *listener, void *data);
 static void setsel(struct wl_listener *listener, void *data);
 static void setup(void);
@@ -534,6 +536,7 @@ static struct wl_event_source *transaction_idle;
 static struct wl_event_source *transaction_timer;
 static int transaction_waiting;
 static struct wl_array ghosts; /* struct wlr_scene_node *, unmapped clients */
+static struct wl_array offmons; /* char *, names of outputs turned off by clients */
 
 /* global event handlers */
 static struct wl_listener cursor_axis = {.notify = axisnotify};
@@ -563,6 +566,7 @@ static struct wl_listener request_set_sel = {.notify = setsel};
 static struct wl_listener request_set_cursor_shape = {.notify = setcursorshape};
 static struct wl_listener request_start_drag = {.notify = requeststartdrag};
 static struct wl_listener start_drag = {.notify = startdrag};
+static struct wl_listener drag_icon_destroy = {.notify = destroydragicon};
 static struct wl_listener new_session_lock = {.notify = locksession};
 static struct wl_listener new_foreign_toplevel_capture_request = {.notify = capturerequest};
 
@@ -1027,6 +1031,8 @@ checkidleinhibitor(struct wlr_surface *exclude)
 void
 cleanup(void)
 {
+	char **name;
+
 	cleanuplisteners();
 #ifdef XWAYLAND
 	wlr_xwayland_destroy(xwayland);
@@ -1052,6 +1058,9 @@ cleanup(void)
 		wl_event_source_remove(transaction_idle);
 	wl_event_source_remove(transaction_timer);
 	wl_array_release(&ghosts);
+	wl_array_for_each(name, &offmons)
+		free(*name);
+	wl_array_release(&offmons);
 
 	wl_display_destroy(dpy);
 	/* Destroy after the wayland display (when the monitors are already destroyed)
@@ -1444,14 +1453,17 @@ createmon(struct wl_listener *listener, void *data)
 	 * monitor supports only a specific set of modes. We just pick the
 	 * monitor's preferred mode; a more sophisticated compositor would let
 	 * the user configure it. */
-	wlr_output_state_set_mode(&state, wlr_output_preferred_mode(wlr_output));
-
 	/* Set up event listeners */
 	LISTEN(&wlr_output->events.frame, &m->frame, rendermon);
 	LISTEN(&wlr_output->events.destroy, &m->destroy, cleanupmon);
 	LISTEN(&wlr_output->events.request_state, &m->request_state, requestmonstate);
 
-	wlr_output_state_set_enabled(&state, 1);
+	/* Some monitors disconnect when they are turned off and reconnect shortly
+	 * after, so keep outputs that were turned off disabled. */
+	if (!monoff(wlr_output)) {
+		wlr_output_state_set_mode(&state, wlr_output_preferred_mode(wlr_output));
+		wlr_output_state_set_enabled(&state, 1);
+	}
 	wlr_output_commit_state(wlr_output, &state);
 	wlr_output_state_finish(&state);
 
@@ -1496,6 +1508,12 @@ createmon(struct wl_listener *listener, void *data)
 	 * output (such as DPI, scale factor, manufacturer, etc).
 	 */
 	m->scene_output = wlr_scene_output_create(scene, wlr_output);
+
+	if (!wlr_output->enabled) {
+		updatemons(NULL, NULL);
+		return;
+	}
+
 	if (m->m.x == -1 && m->m.y == -1)
 		wlr_output_layout_add_auto(output_layout, wlr_output);
 	else
@@ -1640,7 +1658,6 @@ destroydragicon(struct wl_listener *listener, void *data)
 	focusclient(focustop(selmon), NULL, 1);
 	motionnotify(0, NULL, 0, 0, 0, 0);
 	wl_list_remove(&listener->link);
-	free(listener);
 }
 
 void
@@ -1956,7 +1973,6 @@ focusclient(Client *c, LayerSurface *l, int lift)
 		/* Don't change border color if there is an exclusive focus or we are
 		 * handling a drag operation */
 		if (!(old_l && old_l->layer_surface->current.keyboard_interactive == ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE)
-				&& !(old_c && client_wants_focus(old_c))
 				&& !seat->drag)
 			client_set_border_color(c, (float[])COLOR(colors[SchemeSel][ColBorder]));
 	}
@@ -2613,6 +2629,17 @@ motionabsolute(struct wl_listener *listener, void *data)
 	motionnotify(event->time_msec, &event->pointer->base, dx, dy, dx, dy);
 }
 
+char **
+monoff(struct wlr_output *wlr_output)
+{
+	char **name;
+	wl_array_for_each(name, &offmons) {
+		if (!strcmp(*name, wlr_output->name))
+			return name;
+	}
+	return NULL;
+}
+
 void
 motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double dy,
 		double dx_unaccel, double dy_unaccel)
@@ -2800,6 +2827,7 @@ outputmgrapplyortest(struct wlr_output_configuration_v1 *config, int test)
 		/* Ensure displays previously disabled by wlr-output-power-management-v1
 		 * are properly handled*/
 		m->asleep = 0;
+		setmonoff(wlr_output, !config_head->state.enabled);
 
 		/* Don't move monitors if position wouldn't change. This avoids
 		 * wlroots marking the output as manually configured.
@@ -2880,6 +2908,10 @@ powermgrsetmode(struct wl_listener *listener, void *data)
 
 	m->gamma_lut_changed = 1; /* Reapply gamma LUT when re-enabling the output */
 	wlr_output_state_set_enabled(&state, event->mode);
+	/* The output was reconnected while off and was never modeset */
+	if (event->mode && !m->wlr_output->current_mode)
+		wlr_output_state_set_mode(&state, wlr_output_preferred_mode(m->wlr_output));
+	setmonoff(m->wlr_output, !event->mode);
 	wlr_output_commit_state(m->wlr_output, &state);
 
 	m->asleep = !event->mode;
@@ -3163,6 +3195,22 @@ setmon(Client *c, Monitor *m, uint32_t newtags)
 }
 
 void
+setmonoff(struct wlr_output *wlr_output, int off)
+{
+	char **name = monoff(wlr_output), **last;
+
+	if (off && !name && (name = wl_array_add(&offmons, sizeof(*name)))) {
+		if (!(*name = strdup(wlr_output->name)))
+			offmons.size -= sizeof(*name);
+	} else if (!off && name) {
+		free(*name);
+		last = (char **)((char *)offmons.data + offmons.size) - 1;
+		*name = *last;
+		offmons.size -= sizeof(*name);
+	}
+}
+
+void
 setpsel(struct wl_listener *listener, void *data)
 {
 	/* This event is raised by the seat when a client wants to set the selection,
@@ -3303,6 +3351,7 @@ setup(void)
 
 	transaction_timer = wl_event_loop_add_timer(event_loop, transactiontimeout, NULL);
 	wl_array_init(&ghosts);
+	wl_array_init(&offmons);
 
 	xdg_shell = wlr_xdg_shell_create(dpy, 6);
 	wl_signal_add(&xdg_shell->events.new_toplevel, &new_xdg_toplevel);
@@ -3504,7 +3553,7 @@ startdrag(struct wl_listener *listener, void *data)
 		return;
 
 	drag->icon->data = &wlr_scene_drag_icon_create(drag_icon, drag->icon)->node;
-	LISTEN_STATIC(&drag->icon->events.destroy, destroydragicon);
+	wl_signal_add(&drag->icon->events.destroy, &drag_icon_destroy);
 }
 
 int
