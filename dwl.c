@@ -2220,10 +2220,14 @@ Client *
 focustop(Monitor *m)
 {
 	Client *c;
-	wl_list_for_each(c, &fstack, flink) {
+
+	wl_list_for_each(c, &fstack, flink)
+		if (VISIBLEON(c, m) && c->isfullscreen)
+			return c;
+
+	wl_list_for_each(c, &fstack, flink)
 		if (VISIBLEON(c, m))
 			return c;
-	}
 	return NULL;
 }
 
