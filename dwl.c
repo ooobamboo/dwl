@@ -2019,8 +2019,11 @@ mapnotify(struct wl_listener *listener, void *data)
 unset_fullscreen:
 	m = c->mon ? c->mon : xytomon(c->geom.x, c->geom.y);
 	wl_list_for_each(w, &clients, link) {
-		if (w != c && w != p && w->isfullscreen && m == w->mon && (w->tags & c->tags))
+		if (w != c && w != p && w->isfullscreen && m == w->mon && (w->tags & c->tags)) {
 			setfullscreen(w, 0);
+			/* setmon() focused w because focustop() prefers fullscreen clients */
+			focusclient(focustop(selmon), NULL, 1);
+		}
 	}
 }
 
