@@ -3054,8 +3054,7 @@ tagmon(const Arg *arg)
 void
 tile(Monitor *m)
 {
-	unsigned int mw, my, ty;
-	int i, n = 0;
+	int i, n = 0, mw, my, ty;
 	Client *c;
 
 	wl_list_for_each(c, &clients, link)
