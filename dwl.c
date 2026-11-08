@@ -3355,8 +3355,9 @@ updatemons(struct wl_listener *listener, void *data)
 		/* Don't move clients to the left output when plugging monitors */
 		arrange(m);
 		/* make sure fullscreen clients have the right size */
-		if ((c = focustop(m)) && c->isfullscreen)
-			resize(c, m->m, 0);
+		wl_list_for_each(c, &clients, link)
+			if (c->mon == m && c->isfullscreen)
+				resize(c, m->m, 0);
 
 		/* Try to re-set the gamma LUT when updating monitors,
 		 * it's only really needed when enabling a disabled output, but meh. */
