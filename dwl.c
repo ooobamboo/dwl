@@ -1835,7 +1835,8 @@ keypress(struct wl_listener *listener, void *data)
 		for (int i = 0; i < 2; i++) {
 			const Key *key = keybinding(group->mods, group->keysyms[i]);
 			if (key) {
-				consumed[event->keycode] = 1;
+				if (event->keycode < LENGTH(consumed))
+					consumed[event->keycode] = 1;
 				key->func(&key->arg);
 				handled = 1;
 				break;
@@ -1852,7 +1853,7 @@ keypress(struct wl_listener *listener, void *data)
 	if (handled || input_method_keyboard_grab_forward_key(group, event))
 		return;
 
-	if (consumed[event->keycode]) {
+	if (event->keycode < LENGTH(consumed) && consumed[event->keycode]) {
 		if (event->state == WL_KEYBOARD_KEY_STATE_RELEASED)
 			consumed[event->keycode] = 0;
 		return; /* Don't pass to the client the release event of a handled key-press */
