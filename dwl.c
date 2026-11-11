@@ -83,7 +83,6 @@
 #define VISIBLEON(C, M)         ((M) && (C)->mon == (M) && ((C)->tags & (M)->tagset[(M)->seltags]))
 #define TAGMASK                 ((1u << TAGCOUNT) - 1)
 #define LISTEN(E, L, H)         wl_signal_add((E), ((L)->notify = (H), (L)))
-#define LISTEN_STATIC(E, H)     do { struct wl_listener *_l = ecalloc(1, sizeof(*_l)); _l->notify = (H); wl_signal_add((E), _l); } while (0)
 
 /* enums */
 enum { CurNormal, CurPressed, CurMove, CurResize }; /* cursor */
@@ -1103,7 +1102,8 @@ void
 createidleinhibitor(struct wl_listener *listener, void *data)
 {
 	struct wlr_idle_inhibitor_v1 *idle_inhibitor = data;
-	LISTEN_STATIC(&idle_inhibitor->events.destroy, destroyidleinhibitor);
+	struct wl_listener *destroy = ecalloc(1, sizeof(*destroy));
+	LISTEN(&idle_inhibitor->events.destroy, destroy, destroyidleinhibitor);
 
 	checkidleinhibitor(NULL);
 }
