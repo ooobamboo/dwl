@@ -3670,7 +3670,7 @@ configurex11(struct wl_listener *listener, void *data)
 	Client *c = wl_container_of(listener, c, configure);
 	struct wlr_xwayland_surface_configure_event *event = data;
 	if (!client_surface(c) || !client_surface(c)->mapped
-			|| client_is_unmanaged(c)) {
+			|| client_is_unmanaged(c) || !c->mon) {
 		wlr_xwayland_surface_configure(c->surface.xwayland,
 				event->x, event->y, event->width, event->height);
 		return;
