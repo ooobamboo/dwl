@@ -16,7 +16,6 @@
 #include <wlr/backend.h>
 #include <wlr/backend/libinput.h>
 #include <wlr/render/allocator.h>
-#include <wlr/render/swapchain.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_alpha_modifier_v1.h>
 #include <wlr/types/wlr_compositor.h>
@@ -2347,14 +2346,13 @@ outputmgrapplyortest(struct wlr_output_configuration_v1 *config, int test)
 		goto out;
 
 	for (i = 0; i < states_len; i++) {
-		struct wlr_swapchain *swapchain = wlr_output_swapchain_manager_get_swapchain(
-				&swapchain_manager, states[i].output);
-		struct wlr_buffer *buffer;
-		if (swapchain && !states[i].output->enabled
-				&& (buffer = wlr_swapchain_acquire(swapchain))) {
-			wlr_output_state_set_buffer(&states[i].base, buffer);
-			wlr_buffer_unlock(buffer);
-		}
+		Monitor *m = states[i].output->data;
+		struct wlr_scene_output_state_options opts = {
+			.swapchain = wlr_output_swapchain_manager_get_swapchain(
+					&swapchain_manager, states[i].output),
+		};
+		if (!(ok = wlr_scene_output_build_state(m->scene_output, &states[i].base, &opts)))
+			goto out;
 	}
 
 	if (!(ok = wlr_backend_commit(backend, states, states_len)))
