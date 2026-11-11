@@ -1481,6 +1481,8 @@ destroylayersurfacenotify(struct wl_listener *listener, void *data)
 	wl_list_remove(&l->surface_commit.link);
 	wlr_scene_node_destroy(&l->scene->node);
 	wlr_scene_node_destroy(&l->popups->node);
+	/* The wl_surface can outlive its role, e.g. with an idle inhibitor */
+	l->layer_surface->surface->data = NULL;
 	free(l);
 }
 
@@ -1513,6 +1515,7 @@ destroylocksurface(struct wl_listener *listener, void *data)
 	struct wlr_session_lock_surface_v1 *surface, *lock_surface = m->lock_surface;
 
 	m->lock_surface = NULL;
+	lock_surface->surface->data = NULL;
 	wl_list_remove(&m->destroy_lock_surface.link);
 	wl_list_remove(&m->commit_lock_surface.link);
 
