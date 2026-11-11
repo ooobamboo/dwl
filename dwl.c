@@ -2516,7 +2516,6 @@ rendermon(struct wl_listener *listener, void *data)
 
 	wlr_scene_output_commit(m->scene_output, NULL);
 	clock_gettime(CLOCK_MONOTONIC, &now);
-	wlr_output_schedule_frame(m->wlr_output);
 	wlr_scene_output_send_frame_done(m->scene_output, &now);
 }
 
@@ -2546,7 +2545,6 @@ requestmonstate(struct wl_listener *listener, void *data)
 {
 	struct wlr_output_event_request_state *event = data;
 	wlr_output_commit_state(event->output, event->state);
-	wlr_output_schedule_frame(event->output);
 	updatemons(NULL, NULL);
 }
 
