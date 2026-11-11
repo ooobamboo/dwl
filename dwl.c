@@ -1512,14 +1512,21 @@ destroylocksurface(struct wl_listener *listener, void *data)
 	if (lock_surface->surface != seat->keyboard_state.focused_surface)
 		return;
 
-	if (locked && cur_lock && !wl_list_empty(&cur_lock->surfaces)) {
-		surface = wl_container_of(cur_lock->surfaces.next, surface, link);
-		client_notify_enter(surface->surface, wlr_seat_get_keyboard(seat));
-	} else if (!locked) {
+	if (!locked) {
 		focusclient(focustop(selmon), NULL, 1);
-	} else {
-		wlr_seat_keyboard_clear_focus(seat);
+		return;
 	}
+
+	/* The surface being destroyed is still in the list */
+	if (cur_lock) {
+		wl_list_for_each(surface, &cur_lock->surfaces, link) {
+			if (surface != lock_surface) {
+				client_notify_enter(surface->surface, wlr_seat_get_keyboard(seat));
+				return;
+			}
+		}
+	}
+	wlr_seat_keyboard_clear_focus(seat);
 }
 
 void
