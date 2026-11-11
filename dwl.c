@@ -1702,6 +1702,8 @@ void
 focusmon(const Arg *arg)
 {
 	int i = 0, nmons = wl_list_length(&mons);
+	if (!selmon)
+		return;
 	if (nmons) {
 		do /* don't switch to disabled mons */
 			selmon = dirtomon(arg->i);
