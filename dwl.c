@@ -950,16 +950,16 @@ closemon(Monitor *m)
 	/* update selmon if needed and
 	 * move closed monitor's clients to the focused one */
 	Client *c;
-	int i = 0, nmons = wl_list_length(&mons);
-	if (!nmons) {
+	Monitor *o;
+	if (m == selmon || wl_list_empty(&mons)) {
 		selmon = NULL;
-	} else if (m == selmon) {
-		do /* don't switch to disabled mons */
-			selmon = wl_container_of(mons.next, selmon, link);
-		while (!selmon->wlr_output->enabled && i++ < nmons);
-
-		if (!selmon->wlr_output->enabled)
-			selmon = NULL;
+		wl_list_for_each(o, &mons, link) {
+			/* don't switch to disabled mons */
+			if (o->wlr_output->enabled) {
+				selmon = o;
+				break;
+			}
+		}
 	}
 
 	wl_list_for_each(c, &clients, link) {
