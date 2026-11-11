@@ -98,6 +98,8 @@ toplevel_from_wlr_surface(struct wlr_surface *s, Client **pc, LayerSurface **pl)
 			xdg_surface = tmp_xdg_surface;
 			break;
 		case WLR_XDG_SURFACE_ROLE_TOPLEVEL:
+			if (!xdg_surface->toplevel)
+				return -1;
 			c = xdg_surface->data;
 			type = c->type;
 			goto end;
