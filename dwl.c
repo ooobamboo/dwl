@@ -1390,14 +1390,17 @@ createpopup(struct wl_listener *listener, void *data)
 void
 cursorconstrain(struct wlr_pointer_constraint_v1 *constraint)
 {
-	if (active_constraint == constraint)
+	struct wlr_pointer_constraint_v1 *old = active_constraint;
+	if (old == constraint)
 		return;
 
-	if (active_constraint)
-		wlr_pointer_constraint_v1_send_deactivated(active_constraint);
-
+	/* Set first: deactivating a oneshot constraint destroys it, and
+	 * destroypointerconstraint() would warp the cursor back to its hint */
 	active_constraint = constraint;
-	wlr_pointer_constraint_v1_send_activated(constraint);
+	if (old)
+		wlr_pointer_constraint_v1_send_deactivated(old);
+	if (constraint)
+		wlr_pointer_constraint_v1_send_activated(constraint);
 }
 
 void
@@ -2185,7 +2188,6 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	Client *c = NULL, *w = NULL;
 	LayerSurface *l = NULL, *focusedl = NULL;
 	struct wlr_surface *surface = NULL;
-	struct wlr_pointer_constraint_v1 *constraint;
 
 	/* time is 0 in internal calls meant to restore pointer focus. */
 	if (time) {
@@ -2193,8 +2195,9 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 				relative_pointer_mgr, seat, (uint64_t)time * 1000,
 				dx, dy, dx_unaccel, dy_unaccel);
 
-		wl_list_for_each(constraint, &pointer_constraints->constraints, link)
-			cursorconstrain(constraint);
+		/* Only the constraint of the surface with the pointer is active */
+		cursorconstrain(wlr_pointer_constraints_v1_constraint_for_surface(
+				pointer_constraints, seat->pointer_state.focused_surface, seat));
 
 		if (active_constraint && cursor_mode != CurResize && cursor_mode != CurMove) {
 			toplevel_from_wlr_surface(active_constraint->surface, &c, NULL);
@@ -2266,6 +2269,10 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		wlr_cursor_set_xcursor(cursor, cursor_mgr, "default");
 
 	pointerfocus(c, l, surface, sx, sy, time);
+
+	/* The pointer may be on another surface now (moved or warped there) */
+	cursorconstrain(wlr_pointer_constraints_v1_constraint_for_surface(
+			pointer_constraints, seat->pointer_state.focused_surface, seat));
 }
 
 void
