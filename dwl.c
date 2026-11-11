@@ -2284,8 +2284,12 @@ outputmgrapplyortest(struct wlr_output_configuration_v1 *config, int test)
 	for (i = 0; i < states_len; i++) {
 		struct wlr_swapchain *swapchain = wlr_output_swapchain_manager_get_swapchain(
 				&swapchain_manager, states[i].output);
-		if (swapchain && !states[i].output->enabled)
-			wlr_output_state_set_buffer(&states[i].base, wlr_swapchain_acquire(swapchain));
+		struct wlr_buffer *buffer;
+		if (swapchain && !states[i].output->enabled
+				&& (buffer = wlr_swapchain_acquire(swapchain))) {
+			wlr_output_state_set_buffer(&states[i].base, buffer);
+			wlr_buffer_unlock(buffer);
+		}
 	}
 
 	if (!(ok = wlr_backend_commit(backend, states, states_len)))
