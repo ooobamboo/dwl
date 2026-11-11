@@ -2238,6 +2238,8 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 
 	/* If we are currently grabbing the mouse, handle and return */
 	if (cursor_mode == CurMove) {
+		if (!selmon)
+			return;
 		/* Move the grabbed client to the new position. */
 		nx = (int)round(cursor->x) - grabcx;
 		ny = (int)round(cursor->y) - grabcy;
