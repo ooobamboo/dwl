@@ -1929,7 +1929,7 @@ keypress(struct wl_listener *listener, void *data)
 	else
 		wl_event_source_timer_update(group->key_repeat_source, 0);
 
-	if (handled || input_method_keyboard_grab_forward_key(group, event))
+	if (handled)
 		return;
 
 	if (event->keycode < LENGTH(consumed) && consumed[event->keycode]) {
@@ -1937,6 +1937,9 @@ keypress(struct wl_listener *listener, void *data)
 			consumed[event->keycode] = 0;
 		return; /* Don't pass to the client the release event of a handled key-press */
 	}
+
+	if (input_method_keyboard_grab_forward_key(group, event))
+		return;
 	wlr_seat_set_keyboard(seat, &group->wlr_group->keyboard);
 	/* Pass unhandled keycodes along to the client. */
 	wlr_seat_keyboard_notify_key(seat, event->time_msec,
