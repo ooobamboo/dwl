@@ -247,6 +247,11 @@ typedef struct {
 } PointerConstraint;
 
 typedef struct {
+	struct wl_listener commit;
+	struct wl_listener destroy;
+} Popup;
+
+typedef struct {
 	const char *id;
 	const char *title;
 	uint32_t tags;
@@ -307,6 +312,7 @@ static void destroylock(SessionLock *lock, int unlocked);
 static void destroylocksurface(struct wl_listener *listener, void *data);
 static void destroynotify(struct wl_listener *listener, void *data);
 static void destroypointerconstraint(struct wl_listener *listener, void *data);
+static void destroypopup(struct wl_listener *listener, void *data);
 static void destroysessionlock(struct wl_listener *listener, void *data);
 static void destroykeyboardgroup(struct wl_listener *listener, void *data);
 static Monitor *dirtomon(enum wlr_direction dir);
@@ -1054,6 +1060,7 @@ commitpopup(struct wl_listener *listener, void *data)
 {
 	struct wlr_surface *surface = data;
 	struct wlr_xdg_popup *popup = wlr_xdg_popup_try_from_wlr_surface(surface);
+	Popup *p = wl_container_of(listener, p, commit);
 	LayerSurface *l = NULL;
 	Client *c = NULL;
 	struct wlr_box box;
@@ -1075,8 +1082,7 @@ commitpopup(struct wl_listener *listener, void *data)
 	box.x -= (type == LayerShell ? l->scene->node.x : c->geom.x - c->surface.xdg->geometry.x);
 	box.y -= (type == LayerShell ? l->scene->node.y : c->geom.y - c->surface.xdg->geometry.y);
 	wlr_xdg_popup_unconstrain_from_box(popup, &box);
-	wl_list_remove(&listener->link);
-	free(listener);
+	destroypopup(&p->destroy, NULL);
 }
 
 void
@@ -1370,7 +1376,9 @@ createpopup(struct wl_listener *listener, void *data)
 	/* This event is raised when a client (either xdg-shell or layer-shell)
 	 * creates a new popup. */
 	struct wlr_xdg_popup *popup = data;
-	LISTEN_STATIC(&popup->base->surface->events.commit, commitpopup);
+	Popup *p = ecalloc(1, sizeof(*p));
+	LISTEN(&popup->base->surface->events.commit, &p->commit, commitpopup);
+	LISTEN(&popup->events.destroy, &p->destroy, destroypopup);
 }
 
 void
@@ -1557,6 +1565,15 @@ destroypointerconstraint(struct wl_listener *listener, void *data)
 
 	wl_list_remove(&pointer_constraint->destroy.link);
 	free(pointer_constraint);
+}
+
+void
+destroypopup(struct wl_listener *listener, void *data)
+{
+	Popup *p = wl_container_of(listener, p, destroy);
+	wl_list_remove(&p->commit.link);
+	wl_list_remove(&p->destroy.link);
+	free(p);
 }
 
 void
