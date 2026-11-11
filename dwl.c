@@ -320,6 +320,7 @@ static void focusclient(Client *c, LayerSurface *l, int lift);
 static void focusmon(const Arg *arg);
 static void focusstack(const Arg *arg);
 static Client *focustop(Monitor *m);
+static void forgetoffmons(void);
 static void fullscreennotify(struct wl_listener *listener, void *data);
 static void gpureset(struct wl_listener *listener, void *data);
 static void handlesig(int signo);
@@ -1761,6 +1762,26 @@ focustop(Monitor *m)
 }
 
 void
+forgetoffmons(void)
+{
+	/* Forget the outputs that were unplugged while off, or they would stay
+	 * off when plugged in again */
+	char **name, **kept = offmons.data;
+	Monitor *m;
+
+	wl_array_for_each(name, &offmons) {
+		wl_list_for_each(m, &mons, link)
+			if (!strcmp(*name, m->wlr_output->name))
+				break;
+		if (&m->link != &mons)
+			*kept++ = *name;
+		else
+			free(*name);
+	}
+	offmons.size = (char *)kept - (char *)offmons.data;
+}
+
+void
 fullscreennotify(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, fullscreen);
@@ -2451,6 +2472,8 @@ powermgrsetmode(struct wl_listener *listener, void *data)
 	if (!m)
 		return;
 
+	if (event->mode)
+		forgetoffmons();
 	m->gamma_lut_changed = 1; /* Reapply gamma LUT when re-enabling the output */
 	wlr_output_state_set_enabled(&state, event->mode);
 	/* The output was reconnected while off and was never modeset */
