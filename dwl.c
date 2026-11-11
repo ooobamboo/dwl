@@ -1744,14 +1744,18 @@ focusstack(const Arg *arg)
 Client *
 focustop(Monitor *m)
 {
-	Client *c;
+	Client *c, *fs = NULL;
 
-	wl_list_for_each(c, &fstack, flink)
-		if (VISIBLEON(c, m) && c->isfullscreen)
-			return c;
+	wl_list_for_each(c, &fstack, flink) {
+		if (VISIBLEON(c, m) && c->isfullscreen) {
+			fs = c;
+			break;
+		}
+	}
 
+	/* A fullscreen client's children are shown above it */
 	wl_list_for_each(c, &fstack, flink)
-		if (VISIBLEON(c, m))
+		if (VISIBLEON(c, m) && (!fs || c == fs || client_get_parent(c) == fs))
 			return c;
 	return NULL;
 }
@@ -3185,7 +3189,7 @@ void
 transactionapply(void)
 {
 	struct wlr_scene_node **ghost;
-	Client *c;
+	Client *c, *p;
 	Monitor *m;
 
 	wl_event_source_timer_update(transaction_timer, 0);
@@ -3207,7 +3211,8 @@ transactionapply(void)
 	wl_list_for_each(m, &mons, link) {
 		if (m->wlr_output->enabled)
 			wlr_scene_node_set_enabled(&m->fullscreen_bg->node,
-					(c = focustop(m)) && c->isfullscreen);
+					(c = focustop(m)) && (c->isfullscreen
+					|| ((p = client_get_parent(c)) && p->isfullscreen)));
 	}
 
 	motionnotify(0, NULL, 0, 0, 0, 0);
