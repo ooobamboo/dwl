@@ -298,6 +298,7 @@ static void createpopup(struct wl_listener *listener, void *data);
 static void cursorconstrain(struct wlr_pointer_constraint_v1 *constraint);
 static void cursorframe(struct wl_listener *listener, void *data);
 static void cursorwarptohint(void);
+static void destroybackend(struct wl_listener *listener, void *data);
 static void destroydecoration(struct wl_listener *listener, void *data);
 static void destroydragicon(struct wl_listener *listener, void *data);
 static void destroyidleinhibitor(struct wl_listener *listener, void *data);
@@ -455,6 +456,7 @@ static struct wl_array ghosts; /* struct wlr_scene_node *, unmapped clients */
 static struct wl_array offmons; /* char *, names of outputs turned off by clients */
 
 /* global event handlers */
+static struct wl_listener backend_destroy = {.notify = destroybackend};
 static struct wl_listener cursor_axis = {.notify = axisnotify};
 static struct wl_listener cursor_button = {.notify = buttonpress};
 static struct wl_listener cursor_frame = {.notify = cursorframe};
@@ -849,7 +851,8 @@ cleanup(void)
 
 	/* If it's not destroyed manually, it will cause a use-after-free of wlr_seat.
 	 * Destroy it until it's fixed on the wlroots side */
-	wlr_backend_destroy(backend);
+	if (backend)
+		wlr_backend_destroy(backend);
 
 	if (transaction_idle)
 		wl_event_source_remove(transaction_idle);
@@ -905,6 +908,7 @@ cleanuplisteners(void)
 	wl_list_remove(&new_idle_inhibitor.link);
 	wl_list_remove(&layout_change.link);
 	wl_list_remove(&new_input_device.link);
+	wl_list_remove(&backend_destroy.link);
 	wl_list_remove(&new_virtual_keyboard.link);
 	wl_list_remove(&new_virtual_pointer.link);
 	wl_list_remove(&new_pointer_constraint.link);
@@ -1405,6 +1409,21 @@ cursorwarptohint(void)
 		wlr_cursor_warp(cursor, NULL, sx + c->geom.x + c->bw, sy + c->geom.y + c->bw);
 		wlr_seat_pointer_warp(active_constraint->seat, sx, sy);
 	}
+}
+
+void
+destroybackend(struct wl_listener *listener, void *data)
+{
+	/* wlroots destroys the backend itself when the session goes away (e.g.
+	 * seatd stopped at shutdown), and asserts that its listeners are gone */
+	wl_list_remove(&new_output.link);
+	wl_list_init(&new_output.link);
+	wl_list_remove(&new_input_device.link);
+	wl_list_init(&new_input_device.link);
+	wl_list_remove(&backend_destroy.link);
+	wl_list_init(&backend_destroy.link);
+	backend = NULL;
+	quit(NULL);
 }
 
 void
@@ -2742,6 +2761,7 @@ setup(void)
 	 * if an X11 server is running. */
 	if (!(backend = wlr_backend_autocreate(event_loop, &session)))
 		die("couldn't create backend");
+	wl_signal_add(&backend->events.destroy, &backend_destroy);
 
 	/* Initialize the scene graph used to lay out windows */
 	scene = wlr_scene_create();
