@@ -348,6 +348,7 @@ static void pointerfocus(Client *c, LayerSurface* l, struct wlr_surface *surface
 static void printstatus(void);
 static void powermgrsetmode(struct wl_listener *listener, void *data);
 static void quit(const Arg *arg);
+static void refocuspointer(void *data);
 static void rendermon(struct wl_listener *listener, void *data);
 static void requestdecorationmode(struct wl_listener *listener, void *data);
 static void requeststartdrag(struct wl_listener *listener, void *data);
@@ -1005,6 +1006,9 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 	}
 
 	arrangelayers(l->mon);
+	/* Give pointer focus to a surface mapped under the cursor without waiting
+	 * for the cursor to move, once the scene graph has handled this commit */
+	wl_event_loop_add_idle(event_loop, refocuspointer, NULL);
 }
 
 void
@@ -2490,6 +2494,12 @@ void
 quit(const Arg *arg)
 {
 	wl_display_terminate(dpy);
+}
+
+void
+refocuspointer(void *data)
+{
+	motionnotify(0, NULL, 0, 0, 0, 0);
 }
 
 void
