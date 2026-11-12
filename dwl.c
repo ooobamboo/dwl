@@ -3701,10 +3701,24 @@ void
 activatex11(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, activate);
+	struct wlr_surface *surface = client_surface(c);
 
 	/* Only "managed" windows can be activated */
-	if (!client_is_unmanaged(c))
+	if (client_is_unmanaged(c))
+		return;
+
+	/* The X11 input focus goes with the keyboard focus: a client that
+	 * doesn't have it is marked urgent, as with xdg-activation */
+	if (c == focustop(selmon)) {
 		wlr_xwayland_surface_activate(c->surface.xwayland, 1);
+		return;
+	}
+
+	c->isurgent = 1;
+	printstatus();
+
+	if (surface && surface->mapped)
+		client_set_border_color(c, urgentcolor);
 }
 
 void
