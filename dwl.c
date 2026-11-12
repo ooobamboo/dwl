@@ -127,6 +127,7 @@ typedef struct {
 	struct wlr_box current; /* geom currently shown in the scene graph */
 	struct wlr_scene_node *snapshot; /* content shown while resizing */
 	uint32_t resize_serial; /* nonzero while waiting for a resized buffer */
+	uint32_t late_serial; /* one a transaction stopped waiting for */
 	struct wlr_box bounds; /* only width and height are used */
 	union {
 		struct wlr_xdg_surface *xdg;
@@ -1058,6 +1059,14 @@ commitnotify(struct wl_listener *listener, void *data)
 			client_set_tiled(c, WLR_EDGE_TOP | WLR_EDGE_BOTTOM | WLR_EDGE_LEFT |
 					WLR_EDGE_RIGHT);
 		return;
+	}
+
+	/* The transaction showed this client before it had drawn at its new
+	 * size, so what is under the cursor changes now: look again, once the
+	 * scene graph has handled this commit */
+	if (c->late_serial && c->surface.xdg->current.configure_serial >= c->late_serial) {
+		c->late_serial = 0;
+		wl_event_loop_add_idle(event_loop, refocuspointer, NULL);
 	}
 
 	transactioncommit(c, c->resize_serial && c->surface.xdg->current.configure_serial
@@ -3274,6 +3283,8 @@ transactionapply(void)
 	ghosts.size = 0;
 
 	wl_list_for_each(c, &clients, link) {
+		if (c->resize_serial)
+			c->late_serial = c->resize_serial;
 		c->resize_serial = 0;
 		if (!c->mon)
 			continue;
@@ -3410,7 +3421,7 @@ unmapnotify(struct wl_listener *listener, void *data)
 	wlr_scene_node_destroy(&c->scene->node);
 	client_surface(c)->data = NULL;
 	c->snapshot = NULL;
-	c->resize_serial = 0;
+	c->resize_serial = c->late_serial = 0;
 	c->current = (struct wlr_box){0};
 	printstatus();
 	motionnotify(0, NULL, 0, 0, 0, 0);
