@@ -303,7 +303,7 @@ static void cursorframe(struct wl_listener *listener, void *data);
 static void cursorwarptohint(void);
 static void destroybackend(struct wl_listener *listener, void *data);
 static void destroydecoration(struct wl_listener *listener, void *data);
-static void destroydragicon(struct wl_listener *listener, void *data);
+static void destroydrag(struct wl_listener *listener, void *data);
 static void destroyidleinhibitor(struct wl_listener *listener, void *data);
 static void destroylayersurfacenotify(struct wl_listener *listener, void *data);
 static void destroylock(SessionLock *lock, int unlocked);
@@ -490,7 +490,7 @@ static struct wl_listener request_set_sel = {.notify = setsel};
 static struct wl_listener request_set_cursor_shape = {.notify = setcursorshape};
 static struct wl_listener request_start_drag = {.notify = requeststartdrag};
 static struct wl_listener start_drag = {.notify = startdrag};
-static struct wl_listener drag_icon_destroy = {.notify = destroydragicon};
+static struct wl_listener drag_destroy = {.notify = destroydrag};
 static struct wl_listener new_session_lock = {.notify = locksession};
 static struct wl_listener new_foreign_toplevel_capture_request = {.notify = capturerequest};
 
@@ -1458,7 +1458,7 @@ destroydecoration(struct wl_listener *listener, void *data)
 }
 
 void
-destroydragicon(struct wl_listener *listener, void *data)
+destroydrag(struct wl_listener *listener, void *data)
 {
 	/* Focus enter isn't sent during drag, so refocus the focused node. */
 	focusclient(focustop(selmon), NULL, 1);
@@ -3145,11 +3145,10 @@ void
 startdrag(struct wl_listener *listener, void *data)
 {
 	struct wlr_drag *drag = data;
-	if (!drag->icon)
-		return;
 
-	drag->icon->data = &wlr_scene_drag_icon_create(drag_icon, drag->icon)->node;
-	wl_signal_add(&drag->icon->events.destroy, &drag_icon_destroy);
+	wl_signal_add(&drag->events.destroy, &drag_destroy);
+	if (drag->icon)
+		drag->icon->data = &wlr_scene_drag_icon_create(drag_icon, drag->icon)->node;
 }
 
 void
