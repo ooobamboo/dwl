@@ -1019,6 +1019,10 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 	}
 
 	arrangelayers(l->mon);
+	/* A layer surface that no longer wants the keyboard gives it back */
+	if (layer_surface->surface == seat->keyboard_state.focused_surface
+			&& !layer_surface->current.keyboard_interactive)
+		focusclient(focustop(selmon), NULL, 1);
 	/* Give pointer focus to a surface mapped under the cursor without waiting
 	 * for the cursor to move, once the scene graph has handled this commit */
 	wl_event_loop_add_idle(event_loop, refocuspointer, NULL);
