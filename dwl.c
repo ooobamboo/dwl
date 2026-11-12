@@ -2084,6 +2084,8 @@ mapnotify(struct wl_listener *listener, void *data)
 		int x = c->geom.x - (int)c->bw, y = c->geom.y - (int)c->bw;
 		c->geom.x = c->geom.x < sgeom.x ? x : MAX(x, sgeom.x);
 		c->geom.y = c->geom.y < sgeom.y ? y : MAX(y, sgeom.y);
+		/* X11 clients set the fullscreen state before mapping, with no request */
+		c->isfullscreen = client_wants_fullscreen(c);
 	}
 
 	/* Insert this client into client lists. */
