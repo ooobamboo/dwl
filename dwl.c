@@ -969,9 +969,6 @@ closemon(Monitor *m)
 	}
 
 	wl_list_for_each(c, &clients, link) {
-		if (c->isfloating && c->geom.x > m->m.width)
-			resize(c, (struct wlr_box){.x = c->geom.x - m->w.width, .y = c->geom.y,
-					.width = c->geom.width, .height = c->geom.height}, 0);
 		if (c->mon == m)
 			setmon(c, selmon, c->tags);
 	}
@@ -3425,6 +3422,7 @@ updatemons(struct wl_listener *listener, void *data)
 	Client *c;
 	struct wlr_output_configuration_head_v1 *config_head;
 	Monitor *m;
+	struct wlr_box old;
 
 	/* First remove from the layout the disabled monitors */
 	wl_list_for_each(m, &mons, link) {
@@ -3463,6 +3461,7 @@ updatemons(struct wl_listener *listener, void *data)
 		config_head = wlr_output_configuration_head_v1_create(config, m->wlr_output);
 
 		/* Get the effective monitor geometry to use for surfaces */
+		old = m->m;
 		wlr_output_layout_get_box(output_layout, m->wlr_output, &m->m);
 		m->w = m->m;
 		wlr_scene_output_set_position(m->scene_output, m->m.x, m->m.y);
@@ -3480,10 +3479,19 @@ updatemons(struct wl_listener *listener, void *data)
 		arrangelayers(m);
 		/* Don't move clients to the left output when plugging monitors */
 		arrange(m);
-		/* make sure fullscreen clients have the right size */
-		wl_list_for_each(c, &clients, link)
-			if (c->mon == m && c->isfullscreen)
+		/* make sure fullscreen clients have the right size, and that
+		 * floating clients move with their monitor */
+		wl_list_for_each(c, &clients, link) {
+			if (c->mon != m)
+				continue;
+			if (c->isfullscreen)
 				resize(c, m->m, 0);
+			else if ((c->isfloating || !m->lt[m->sellt]->arrange) && !wlr_box_empty(&old)
+					&& (m->m.x != old.x || m->m.y != old.y))
+				resize(c, (struct wlr_box){.x = c->geom.x + m->m.x - old.x,
+						.y = c->geom.y + m->m.y - old.y,
+						.width = c->geom.width, .height = c->geom.height}, 0);
+		}
 
 		/* Try to re-set the gamma LUT when updating monitors,
 		 * it's only really needed when enabling a disabled output, but meh. */
