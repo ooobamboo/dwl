@@ -879,7 +879,14 @@ cleanupmon(struct wl_listener *listener, void *data)
 {
 	Monitor *m = wl_container_of(listener, m, destroy);
 	LayerSurface *l, *tmp;
+	struct wlr_virtual_pointer_v1 *pointer;
 	size_t i;
+
+	/* wlr_cursor doesn't forget the output of the devices mapped to it */
+	wl_list_for_each(pointer, &virtual_pointer_mgr->virtual_pointers, link) {
+		if (pointer->pointer.base.data == m->wlr_output)
+			wlr_cursor_map_input_to_output(cursor, &pointer->pointer.base, NULL);
+	}
 
 	/* m->layers[i] are intentionally not unlinked */
 	for (i = 0; i < LENGTH(m->layers); i++) {
@@ -3573,7 +3580,7 @@ virtualpointer(struct wl_listener *listener, void *data)
 	struct wlr_input_device *device = &event->new_pointer->pointer.base;
 
 	wlr_cursor_attach_input_device(cursor, device);
-	if (event->suggested_output)
+	if ((device->data = event->suggested_output))
 		wlr_cursor_map_input_to_output(cursor, device, event->suggested_output);
 	wlr_seat_set_capabilities(seat, seat->capabilities | WL_SEAT_CAPABILITY_POINTER);
 }
