@@ -1495,6 +1495,8 @@ destroylayersurfacenotify(struct wl_listener *listener, void *data)
 void
 destroylock(SessionLock *lock, int unlock)
 {
+	Monitor *m;
+
 	wlr_seat_keyboard_notify_clear_focus(seat);
 	if ((locked = !unlock))
 		goto destroy;
@@ -1503,6 +1505,10 @@ destroylock(SessionLock *lock, int unlock)
 	/* The lock surfaces are destroyed after this: don't give them the pointer */
 	wlr_scene_node_set_enabled(&lock->scene->node, 0);
 
+	/* Give the keyboard back to a layer surface that wants it exclusively,
+	 * which focusclient() then leaves it to */
+	wl_list_for_each(m, &mons, link)
+		arrangelayers(m);
 	focusclient(focustop(selmon), NULL, 0);
 	motionnotify(0, NULL, 0, 0, 0, 0);
 
