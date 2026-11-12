@@ -1503,6 +1503,8 @@ destroylock(SessionLock *lock, int unlock)
 		goto destroy;
 
 	wlr_scene_node_set_enabled(&locked_bg->node, 0);
+	/* The lock surfaces are destroyed after this: don't give them the pointer */
+	wlr_scene_node_set_enabled(&lock->scene->node, 0);
 
 	focusclient(focustop(selmon), NULL, 0);
 	motionnotify(0, NULL, 0, 0, 0, 0);
