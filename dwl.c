@@ -888,6 +888,10 @@ cleanupmon(struct wl_listener *listener, void *data)
 			wlr_cursor_map_input_to_output(cursor, &pointer->pointer.base, NULL);
 	}
 
+	/* Destroy the scene output first: a client that the layer surfaces
+	 * destroyed below uncover would be sent wl_surface.enter for it */
+	wlr_scene_output_destroy(m->scene_output);
+
 	/* m->layers[i] are intentionally not unlinked */
 	for (i = 0; i < LENGTH(m->layers); i++) {
 		wl_list_for_each_safe(l, tmp, &m->layers[i], link)
@@ -902,7 +906,6 @@ cleanupmon(struct wl_listener *listener, void *data)
 		destroylocksurface(&m->destroy_lock_surface, NULL);
 	m->wlr_output->data = NULL;
 	wlr_output_layout_remove(output_layout, m->wlr_output);
-	wlr_scene_output_destroy(m->scene_output);
 
 	closemon(m);
 	wlr_scene_node_destroy(&m->fullscreen_bg->node);
