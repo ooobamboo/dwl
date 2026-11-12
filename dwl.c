@@ -1478,8 +1478,13 @@ destroydecoration(struct wl_listener *listener, void *data)
 void
 destroydrag(struct wl_listener *listener, void *data)
 {
-	/* Focus enter isn't sent during drag, so refocus the focused node. */
-	focusclient(focustop(selmon), NULL, 1);
+	Client *c = NULL;
+
+	/* Focus enter isn't sent during drag, so the focus didn't follow the
+	 * pointer: give it now to the client the drag ended on */
+	if (sloppyfocus)
+		xytonode(cursor->x, cursor->y, NULL, &c, NULL, NULL, NULL);
+	focusclient(c && !client_is_unmanaged(c) ? c : focustop(selmon), NULL, 1);
 	motionnotify(0, NULL, 0, 0, 0, 0);
 	wl_list_remove(&listener->link);
 }
@@ -2456,7 +2461,9 @@ pointerfocus(Client *c, LayerSurface *l, struct wlr_surface *surface, double sx,
 {
 	struct timespec now;
 
-	if (surface != seat->pointer_state.focused_surface && sloppyfocus && time) {
+	/* The keyboard focus can't change during a drag, see destroydrag() */
+	if (surface != seat->pointer_state.focused_surface && sloppyfocus && time
+			&& !seat->drag) {
 		if (c && (!client_is_unmanaged(c) || client_wants_focus(c))) {
 			focusclient(c, NULL, 0);
 		} else if (l && l->layer_surface->current.keyboard_interactive) {
