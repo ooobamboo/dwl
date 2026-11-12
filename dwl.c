@@ -2727,6 +2727,8 @@ setfloating(Client *c, int floating)
 void
 setfullscreen(Client *c, int fullscreen)
 {
+	int wasfullscreen = c->isfullscreen;
+
 	c->isfullscreen = fullscreen;
 	if (!c->mon || !client_surface(c)->mapped)
 		return;
@@ -2734,7 +2736,9 @@ setfullscreen(Client *c, int fullscreen)
 	client_set_fullscreen(c, fullscreen);
 
 	if (fullscreen) {
-		c->prev = c->geom;
+		/* Keep the geometry saved when the client became fullscreen */
+		if (!wasfullscreen)
+			c->prev = c->geom;
 		resize(c, c->mon->m, 0);
 	} else {
 		/* restore previous size instead of arrange for floating windows since
@@ -2782,7 +2786,8 @@ setmon(Client *c, Monitor *m, uint32_t newtags)
 	if (oldmon == m)
 		return;
 	c->mon = m;
-	c->prev = c->geom;
+	if (!c->isfullscreen || wlr_box_empty(&c->prev))
+		c->prev = c->geom;
 
 	/* Scene graph sends surface leave/enter events on move and resize */
 	if (oldmon)
