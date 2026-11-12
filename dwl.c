@@ -2109,7 +2109,8 @@ mapnotify(struct wl_listener *listener, void *data)
 	 * If there is no parent, apply rules */
 	if ((p = client_get_parent(c))) {
 		c->isfloating = 1;
-		setmon(c, p->mon, p->tags);
+		/* An unmanaged parent has no monitor */
+		setmon(c, p->mon ? p->mon : selmon, p->tags);
 	} else {
 		applyrules(c);
 	}
