@@ -3462,9 +3462,11 @@ updatemons(struct wl_listener *listener, void *data)
 	struct wlr_output_configuration_v1 *config
 			= wlr_output_configuration_v1_create();
 	Client *c;
+	LayerSurface *l, *tmp;
 	struct wlr_output_configuration_head_v1 *config_head;
 	Monitor *m;
 	struct wlr_box old;
+	size_t i;
 
 	/* First remove from the layout the disabled monitors */
 	wl_list_for_each(m, &mons, link) {
@@ -3477,6 +3479,11 @@ updatemons(struct wl_listener *listener, void *data)
 
 		/* Remove this output from the layout to avoid cursor enter inside it */
 		wlr_output_layout_remove(output_layout, m->wlr_output);
+		/* Its layer surfaces would stay where they are in the layout */
+		for (i = 0; i < LENGTH(m->layers); i++) {
+			wl_list_for_each_safe(l, tmp, &m->layers[i], link)
+				wlr_layer_surface_v1_destroy(l->layer_surface);
+		}
 		closemon(m);
 		m->m = m->w = (struct wlr_box){0};
 	}
