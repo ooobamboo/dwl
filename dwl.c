@@ -1003,6 +1003,7 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 	if (layer_surface->current.committed == 0 && l->mapped == layer_surface->surface->mapped)
 		return;
 	l->mapped = layer_surface->surface->mapped;
+	wlr_scene_node_set_enabled(&l->scene->node, l->mapped);
 
 	if (scene_layer != l->scene->node.parent) {
 		wlr_scene_node_reparent(&l->scene->node, scene_layer);
