@@ -3365,11 +3365,16 @@ void
 unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 {
 	LayerSurface *l = wl_container_of(listener, l, unmap);
+	struct wl_list *prev = l->link.prev;
 
 	l->mapped = 0;
 	wlr_scene_node_set_enabled(&l->scene->node, 0);
+	/* Arrange the others without this surface: wlroots forgets its configures
+	 * right after unmapping it, so it couldn't acknowledge one sent now */
+	wl_list_remove(&l->link);
 	if (l->layer_surface->output && (l->mon = l->layer_surface->output->data))
 		arrangelayers(l->mon);
+	wl_list_insert(prev, &l->link);
 	if (l->layer_surface->surface == seat->keyboard_state.focused_surface)
 		focusclient(focustop(selmon), NULL, 1);
 	motionnotify(0, NULL, 0, 0, 0, 0);
