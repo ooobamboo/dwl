@@ -2004,7 +2004,13 @@ locksession(struct wl_listener *listener, void *data)
 		return;
 	}
 	lock = session_lock->data = ecalloc(1, sizeof(*lock));
+	/* The keyboard grab of a popup or of a drag would keep the focus from
+	 * changing, and focusclient() leaves it to a layer surface that has it
+	 * exclusively */
+	wlr_seat_keyboard_end_grab(seat);
 	focusclient(NULL, NULL, 0);
+	input_method_relay_set_focus(input_method_relay, NULL);
+	wlr_seat_keyboard_notify_clear_focus(seat);
 
 	lock->scene = wlr_scene_tree_create(layers[LyrBlock]);
 	cur_lock = lock->lock = session_lock;
