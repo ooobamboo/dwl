@@ -136,6 +136,7 @@ typedef struct {
 	struct wlr_box current; /* geom currently shown in the scene graph */
 	struct wlr_scene_node *snapshot; /* content shown while resizing */
 	uint32_t resize_serial; /* nonzero while waiting for a resized buffer */
+	uint32_t late_serial; /* one a transaction stopped waiting for */
 	struct wlr_box bounds; /* only width and height are used */
 	union {
 		struct wlr_xdg_surface *xdg;
@@ -349,7 +350,7 @@ static void cursorsurfacedestroy(struct wl_listener *listener, void *data);
 static void cursorwarptohint(void);
 static void destroybackend(struct wl_listener *listener, void *data);
 static void destroydecoration(struct wl_listener *listener, void *data);
-static void destroydragicon(struct wl_listener *listener, void *data);
+static void destroydrag(struct wl_listener *listener, void *data);
 static void destroyidleinhibitor(struct wl_listener *listener, void *data);
 static void destroylayersurfacenotify(struct wl_listener *listener, void *data);
 static void destroylock(SessionLock *lock, int unlocked);
@@ -574,7 +575,7 @@ static struct wl_listener request_set_sel = {.notify = setsel};
 static struct wl_listener request_set_cursor_shape = {.notify = setcursorshape};
 static struct wl_listener request_start_drag = {.notify = requeststartdrag};
 static struct wl_listener start_drag = {.notify = startdrag};
-static struct wl_listener drag_icon_destroy = {.notify = destroydragicon};
+static struct wl_listener drag_destroy = {.notify = destroydrag};
 static struct wl_listener new_session_lock = {.notify = locksession};
 static struct wl_listener new_foreign_toplevel_capture_request = {.notify = capturerequest};
 
@@ -1026,8 +1027,13 @@ checkidleinhibitor(struct wlr_surface *exclude)
 	wl_list_for_each(inhibitor, &idle_inhibit_mgr->inhibitors, link) {
 		struct wlr_surface *surface = wlr_surface_get_root_surface(inhibitor->surface);
 		struct wlr_scene_tree *tree = surface->data;
-		if (exclude != surface && (bypass_surface_visibility || (!tree
-				|| wlr_scene_node_coords(&tree->node, &unused_lx, &unused_ly)))) {
+		/* Only one inhibitor is being destroyed: its surface may have others */
+		if (exclude == inhibitor->surface) {
+			exclude = NULL;
+			continue;
+		}
+		if (bypass_surface_visibility || (!tree
+				|| wlr_scene_node_coords(&tree->node, &unused_lx, &unused_ly))) {
 			inhibited = 1;
 			break;
 		}
@@ -1084,7 +1090,18 @@ cleanupmon(struct wl_listener *listener, void *data)
 {
 	Monitor *m = wl_container_of(listener, m, destroy);
 	LayerSurface *l, *tmp;
+	struct wlr_virtual_pointer_v1 *pointer;
 	size_t i;
+
+	/* wlr_cursor doesn't forget the output of the devices mapped to it */
+	wl_list_for_each(pointer, &virtual_pointer_mgr->virtual_pointers, link) {
+		if (pointer->pointer.base.data == m->wlr_output)
+			wlr_cursor_map_input_to_output(cursor, &pointer->pointer.base, NULL);
+	}
+
+	/* Destroy the scene output first: a client that the layer surfaces
+	 * destroyed below uncover would be sent wl_surface.enter for it */
+	wlr_scene_output_destroy(m->scene_output);
 
 	/* m->layers[i] are intentionally not unlinked */
 	for (i = 0; i < LENGTH(m->layers); i++) {
@@ -1106,7 +1123,6 @@ cleanupmon(struct wl_listener *listener, void *data)
 		destroylocksurface(&m->destroy_lock_surface, NULL);
 	m->wlr_output->data = NULL;
 	wlr_output_layout_remove(output_layout, m->wlr_output);
-	wlr_scene_output_destroy(m->scene_output);
 
 	free(m->pertag);
 	closemon(m);
@@ -1175,9 +1191,6 @@ closemon(Monitor *m)
 	}
 
 	wl_list_for_each(c, &clients, link) {
-		if (c->isfloating && c->geom.x > m->m.width)
-			resize(c, (struct wlr_box){.x = c->geom.x - m->w.width, .y = c->geom.y,
-					.width = c->geom.width, .height = c->geom.height}, 0);
 		if (c->mon == m)
 			setmon(c, selmon, c->tags);
 	}
@@ -1208,6 +1221,7 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 	if (layer_surface->current.committed == 0 && l->mapped == layer_surface->surface->mapped)
 		return;
 	l->mapped = layer_surface->surface->mapped;
+	wlr_scene_node_set_enabled(&l->scene->node, l->mapped);
 
 	if (scene_layer != l->scene->node.parent) {
 		wlr_scene_node_reparent(&l->scene->node, scene_layer);
@@ -1218,6 +1232,10 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 	}
 
 	arrangelayers(l->mon);
+	/* A layer surface that no longer wants the keyboard gives it back */
+	if (layer_surface->surface == seat->keyboard_state.focused_surface
+			&& !layer_surface->current.keyboard_interactive)
+		focusclient(focustop(selmon), NULL, 1);
 	/* Give pointer focus to a surface mapped under the cursor without waiting
 	 * for the cursor to move, once the scene graph has handled this commit */
 	wl_event_loop_add_idle(event_loop, refocuspointer, NULL);
@@ -1264,6 +1282,14 @@ commitnotify(struct wl_listener *listener, void *data)
 			client_set_tiled(c, WLR_EDGE_TOP | WLR_EDGE_BOTTOM | WLR_EDGE_LEFT |
 					WLR_EDGE_RIGHT);
 		return;
+	}
+
+	/* The transaction showed this client before it had drawn at its new
+	 * size, so what is under the cursor changes now: look again, once the
+	 * scene graph has handled this commit */
+	if (c->late_serial && c->surface.xdg->current.configure_serial >= c->late_serial) {
+		c->late_serial = 0;
+		wl_event_loop_add_idle(event_loop, refocuspointer, NULL);
 	}
 
 	transactioncommit(c, c->resize_serial && c->surface.xdg->current.configure_serial
@@ -1624,14 +1650,17 @@ createpopup(struct wl_listener *listener, void *data)
 void
 cursorconstrain(struct wlr_pointer_constraint_v1 *constraint)
 {
-	if (active_constraint == constraint)
+	struct wlr_pointer_constraint_v1 *old = active_constraint;
+	if (old == constraint)
 		return;
 
-	if (active_constraint)
-		wlr_pointer_constraint_v1_send_deactivated(active_constraint);
-
+	/* Set first: deactivating a oneshot constraint destroys it, and
+	 * destroypointerconstraint() would warp the cursor back to its hint */
 	active_constraint = constraint;
-	wlr_pointer_constraint_v1_send_activated(constraint);
+	if (old)
+		wlr_pointer_constraint_v1_send_deactivated(old);
+	if (constraint)
+		wlr_pointer_constraint_v1_send_activated(constraint);
 }
 
 void
@@ -1685,10 +1714,15 @@ destroydecoration(struct wl_listener *listener, void *data)
 }
 
 void
-destroydragicon(struct wl_listener *listener, void *data)
+destroydrag(struct wl_listener *listener, void *data)
 {
-	/* Focus enter isn't sent during drag, so refocus the focused node. */
-	focusclient(focustop(selmon), NULL, 1);
+	Client *c = NULL;
+
+	/* Focus enter isn't sent during drag, so the focus didn't follow the
+	 * pointer: give it now to the client the drag ended on */
+	if (sloppyfocus)
+		xytonode(cursor->x, cursor->y, NULL, &c, NULL, NULL, NULL);
+	focusclient(c && !client_is_unmanaged(c) ? c : focustop(selmon), NULL, 1);
 	motionnotify(0, NULL, 0, 0, 0, 0);
 	wl_list_remove(&listener->link);
 }
@@ -1698,7 +1732,7 @@ destroyidleinhibitor(struct wl_listener *listener, void *data)
 {
 	/* `data` is the wlr_surface of the idle inhibitor being destroyed,
 	 * at this point the idle inhibitor is still in the list of the manager */
-	checkidleinhibitor(wlr_surface_get_root_surface(data));
+	checkidleinhibitor(data);
 	wl_list_remove(&listener->link);
 	free(listener);
 }
@@ -1722,12 +1756,20 @@ destroylayersurfacenotify(struct wl_listener *listener, void *data)
 void
 destroylock(SessionLock *lock, int unlock)
 {
+	Monitor *m;
+
 	wlr_seat_keyboard_notify_clear_focus(seat);
 	if ((locked = !unlock))
 		goto destroy;
 
 	wlr_scene_node_set_enabled(&locked_bg->node, 0);
+	/* The lock surfaces are destroyed after this: don't give them the pointer */
+	wlr_scene_node_set_enabled(&lock->scene->node, 0);
 
+	/* Give the keyboard back to a layer surface that wants it exclusively,
+	 * which focusclient() then leaves it to */
+	wl_list_for_each(m, &mons, link)
+		arrangelayers(m);
 	focusclient(focustop(selmon), NULL, 0);
 	motionnotify(0, NULL, 0, 0, 0, 0);
 
@@ -2552,7 +2594,13 @@ locksession(struct wl_listener *listener, void *data)
 		return;
 	}
 	lock = session_lock->data = ecalloc(1, sizeof(*lock));
+	/* The keyboard grab of a popup or of a drag would keep the focus from
+	 * changing, and focusclient() leaves it to a layer surface that has it
+	 * exclusively */
+	wlr_seat_keyboard_end_grab(seat);
 	focusclient(NULL, NULL, 0);
+	input_method_relay_set_focus(input_method_relay, NULL);
+	wlr_seat_keyboard_notify_clear_focus(seat);
 
 	lock->scene = wlr_scene_tree_create(layers[LyrBlock]);
 	cur_lock = lock->lock = session_lock;
@@ -2619,6 +2667,8 @@ mapnotify(struct wl_listener *listener, void *data)
 		int x = c->geom.x - (int)c->bw, y = c->geom.y - (int)c->bw;
 		c->geom.x = c->geom.x < sgeom.x ? x : MAX(x, sgeom.x);
 		c->geom.y = c->geom.y < sgeom.y ? y : MAX(y, sgeom.y);
+		/* X11 clients set the fullscreen state before mapping, with no request */
+		c->isfullscreen = client_wants_fullscreen(c);
 	}
 
 	/* Insert this client into client lists. */
@@ -2643,7 +2693,8 @@ mapnotify(struct wl_listener *listener, void *data)
 	 * If there is no parent, apply rules */
 	if ((p = client_get_parent(c))) {
 		c->isfloating = 1;
-		setmon(c, p->mon, p->tags);
+		/* An unmanaged parent has no monitor */
+		setmon(c, p->mon ? p->mon : selmon, p->tags);
 	} else {
 		applyrules(c);
 	}
@@ -2736,19 +2787,6 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	Client *c = NULL, *w = NULL;
 	LayerSurface *l = NULL, *focusedl = NULL;
 	struct wlr_surface *surface = NULL;
-	struct wlr_pointer_constraint_v1 *constraint;
-
-	/* Find the client under the pointer and send the event along. */
-	xytonode(cursor->x, cursor->y, &surface, &c, &l, &sx, &sy);
-
-	if (cursor_mode == CurPressed && !seat->drag
-			&& surface != seat->pointer_state.focused_surface
-			&& toplevel_from_wlr_surface(seat->pointer_state.focused_surface, &w, &focusedl) >= 0) {
-		c = w;
-		surface = seat->pointer_state.focused_surface;
-		sx = cursor->x - (focusedl ? focusedl->scene->node.x : w->geom.x);
-		sy = cursor->y - (focusedl ? focusedl->scene->node.y : w->geom.y);
-	}
 
 	/* time is 0 in internal calls meant to restore pointer focus. */
 	if (time) {
@@ -2756,8 +2794,9 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 				relative_pointer_mgr, seat, (uint64_t)time * 1000,
 				dx, dy, dx_unaccel, dy_unaccel);
 
-		wl_list_for_each(constraint, &pointer_constraints->constraints, link)
-			cursorconstrain(constraint);
+		/* Only the constraint of the surface with the pointer is active */
+		cursorconstrain(wlr_pointer_constraints_v1_constraint_for_surface(
+				pointer_constraints, seat->pointer_state.focused_surface, seat));
 
 		if (active_constraint && cursor_mode != CurResize && cursor_mode != CurMove) {
 			toplevel_from_wlr_surface(active_constraint->surface, &c, NULL);
@@ -2811,6 +2850,18 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		return;
 	}
 
+	/* Find the client under the pointer and send the event along. */
+	xytonode(cursor->x, cursor->y, &surface, &c, &l, &sx, &sy);
+
+	if (cursor_mode == CurPressed && !seat->drag
+			&& surface != seat->pointer_state.focused_surface
+			&& toplevel_from_wlr_surface(seat->pointer_state.focused_surface, &w, &focusedl) >= 0) {
+		c = w;
+		surface = seat->pointer_state.focused_surface;
+		sx = cursor->x - (focusedl ? focusedl->scene->node.x : w->geom.x);
+		sy = cursor->y - (focusedl ? focusedl->scene->node.y : w->geom.y);
+	}
+
 	/* If there's no client surface under the cursor, set the cursor image to a
 	 * default. This is what makes the cursor image appear when you move it
 	 * off of a client or over its border. */
@@ -2818,6 +2869,10 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 		wlr_cursor_set_xcursor(cursor, cursor_mgr, "default");
 
 	pointerfocus(c, l, surface, sx, sy, time);
+
+	/* The pointer may be on another surface now (moved or warped there) */
+	cursorconstrain(wlr_pointer_constraints_v1_constraint_for_surface(
+			pointer_constraints, seat->pointer_state.focused_surface, seat));
 }
 
 void
@@ -2962,7 +3017,9 @@ pointerfocus(Client *c, LayerSurface *l, struct wlr_surface *surface, double sx,
 {
 	struct timespec now;
 
-	if (surface != seat->pointer_state.focused_surface && sloppyfocus && time) {
+	/* The keyboard focus can't change during a drag, see destroydrag() */
+	if (surface != seat->pointer_state.focused_surface && sloppyfocus && time
+			&& !seat->drag) {
 		if (c && (!client_is_unmanaged(c) || client_wants_focus(c))) {
 			focusclient(c, NULL, 0);
 		} else if (l && l->layer_surface->current.keyboard_interactive) {
@@ -3222,6 +3279,8 @@ setfloating(Client *c, int isfloating)
 void
 setfullscreen(Client *c, int fullscreen)
 {
+	int wasfullscreen = c->isfullscreen;
+
 	c->isfullscreen = fullscreen;
 	if (!c->mon || !client_surface(c)->mapped)
 		return;
@@ -3229,9 +3288,11 @@ setfullscreen(Client *c, int fullscreen)
 	client_set_fullscreen(c, fullscreen);
 
 	if (fullscreen) {
-		c->prev = c->geom;
+		/* Keep the geometry saved when the client became fullscreen */
+		if (!wasfullscreen)
+			c->prev = c->geom;
 		resize(c, c->mon->m, 0);
-	} else {
+	} else if (wasfullscreen) {
 		/* restore previous size instead of arrange for floating windows since
 		 * client positions are set by the user and cannot be recalculated */
 		resize(c, c->prev, 0);
@@ -3277,7 +3338,8 @@ setmon(Client *c, Monitor *m, uint32_t newtags)
 	if (oldmon == m)
 		return;
 	c->mon = m;
-	c->prev = c->geom;
+	if (!c->isfullscreen || wlr_box_empty(&c->prev))
+		c->prev = c->geom;
 
 	/* Scene graph sends surface leave/enter events on move and resize */
 	if (oldmon)
@@ -3650,11 +3712,10 @@ void
 startdrag(struct wl_listener *listener, void *data)
 {
 	struct wlr_drag *drag = data;
-	if (!drag->icon)
-		return;
 
-	drag->icon->data = &wlr_scene_drag_icon_create(drag_icon, drag->icon)->node;
-	wl_signal_add(&drag->icon->events.destroy, &drag_icon_destroy);
+	wl_signal_add(&drag->events.destroy, &drag_destroy);
+	if (drag->icon)
+		drag->icon->data = &wlr_scene_drag_icon_create(drag_icon, drag->icon)->node;
 }
 
 int
@@ -3860,6 +3921,8 @@ transactionapply(void)
 	ghosts.size = 0;
 
 	wl_list_for_each(c, &clients, link) {
+		if (c->resize_serial)
+			c->late_serial = c->resize_serial;
 		c->resize_serial = 0;
 		if (!c->mon)
 			continue;
@@ -3939,11 +4002,16 @@ void
 unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 {
 	LayerSurface *l = wl_container_of(listener, l, unmap);
+	struct wl_list *prev = l->link.prev;
 
 	l->mapped = 0;
 	wlr_scene_node_set_enabled(&l->scene->node, 0);
+	/* Arrange the others without this surface: wlroots forgets its configures
+	 * right after unmapping it, so it couldn't acknowledge one sent now */
+	wl_list_remove(&l->link);
 	if (l->layer_surface->output && (l->mon = l->layer_surface->output->data))
 		arrangelayers(l->mon);
+	wl_list_insert(prev, &l->link);
 	if (l->layer_surface->surface == seat->keyboard_state.focused_surface)
 		focusclient(focustop(selmon), NULL, 1);
 	motionnotify(0, NULL, 0, 0, 0, 0);
@@ -3996,7 +4064,7 @@ unmapnotify(struct wl_listener *listener, void *data)
 	wlr_scene_node_destroy(&c->scene->node);
 	client_surface(c)->data = NULL;
 	c->snapshot = NULL;
-	c->resize_serial = 0;
+	c->resize_serial = c->late_serial = 0;
 	c->current = (struct wlr_box){0};
 	drawbars();
 	motionnotify(0, NULL, 0, 0, 0, 0);
@@ -4015,8 +4083,11 @@ updatemons(struct wl_listener *listener, void *data)
 	struct wlr_output_configuration_v1 *config
 			= wlr_output_configuration_v1_create();
 	Client *c;
+	LayerSurface *l, *tmp;
 	struct wlr_output_configuration_head_v1 *config_head;
 	Monitor *m;
+	struct wlr_box old;
+	size_t i;
 
 	/* First remove from the layout the disabled monitors */
 	wl_list_for_each(m, &mons, link) {
@@ -4029,6 +4100,11 @@ updatemons(struct wl_listener *listener, void *data)
 
 		/* Remove this output from the layout to avoid cursor enter inside it */
 		wlr_output_layout_remove(output_layout, m->wlr_output);
+		/* Its layer surfaces would stay where they are in the layout */
+		for (i = 0; i < LENGTH(m->layers); i++) {
+			wl_list_for_each_safe(l, tmp, &m->layers[i], link)
+				wlr_layer_surface_v1_destroy(l->layer_surface);
+		}
 		closemon(m);
 		m->m = m->w = (struct wlr_box){0};
 	}
@@ -4055,6 +4131,7 @@ updatemons(struct wl_listener *listener, void *data)
 		config_head = wlr_output_configuration_head_v1_create(config, m->wlr_output);
 
 		/* Get the effective monitor geometry to use for surfaces */
+		old = m->m;
 		wlr_output_layout_get_box(output_layout, m->wlr_output, &m->m);
 		m->w = m->m;
 		wlr_scene_output_set_position(m->scene_output, m->m.x, m->m.y);
@@ -4072,10 +4149,19 @@ updatemons(struct wl_listener *listener, void *data)
 		arrangelayers(m);
 		/* Don't move clients to the left output when plugging monitors */
 		arrange(m);
-		/* make sure fullscreen clients have the right size */
-		wl_list_for_each(c, &clients, link)
-			if (c->mon == m && c->isfullscreen)
+		/* make sure fullscreen clients have the right size, and that
+		 * floating clients move with their monitor */
+		wl_list_for_each(c, &clients, link) {
+			if (c->mon != m)
+				continue;
+			if (c->isfullscreen)
 				resize(c, m->m, 0);
+			else if ((c->isfloating || !m->lt[m->sellt]->arrange) && !wlr_box_empty(&old)
+					&& (m->m.x != old.x || m->m.y != old.y))
+				resize(c, (struct wlr_box){.x = c->geom.x + m->m.x - old.x,
+						.y = c->geom.y + m->m.y - old.y,
+						.width = c->geom.width, .height = c->geom.height}, 0);
+		}
 
 		/* Try to re-set the gamma LUT when updating monitors,
 		 * it's only really needed when enabling a disabled output, but meh. */
@@ -4243,7 +4329,7 @@ virtualpointer(struct wl_listener *listener, void *data)
 	struct wlr_input_device *device = &event->new_pointer->pointer.base;
 
 	wlr_cursor_attach_input_device(cursor, device);
-	if (event->suggested_output)
+	if ((device->data = event->suggested_output))
 		wlr_cursor_map_input_to_output(cursor, device, event->suggested_output);
 	wlr_seat_set_capabilities(seat, seat->capabilities | WL_SEAT_CAPABILITY_POINTER);
 	handlecursoractivity();
@@ -4409,10 +4495,24 @@ void
 activatex11(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, activate);
+	struct wlr_surface *surface = client_surface(c);
 
 	/* Only "managed" windows can be activated */
-	if (!client_is_unmanaged(c))
+	if (client_is_unmanaged(c))
+		return;
+
+	/* The X11 input focus goes with the keyboard focus: a client that
+	 * doesn't have it is marked urgent, as with xdg-activation */
+	if (c == focustop(selmon)) {
 		wlr_xwayland_surface_activate(c->surface.xwayland, 1);
+		return;
+	}
+
+	c->isurgent = 1;
+	drawbars();
+
+	if (surface && surface->mapped)
+		client_set_border_color(c, (float[])COLOR(colors[SchemeUrg][ColBorder]));
 }
 
 void
@@ -4446,7 +4546,10 @@ configurex11(struct wl_listener *listener, void *data)
 				event->x, event->y, event->width, event->height);
 		return;
 	}
-	if ((c->isfloating && c != grabc) || !c->mon->lt[c->mon->sellt]->arrange) {
+	if (c->isfullscreen) {
+		/* It keeps the whole monitor, and is told so */
+		resize(c, c->mon->m, 0);
+	} else if ((c->isfloating && c != grabc) || !c->mon->lt[c->mon->sellt]->arrange) {
 		resize(c, (struct wlr_box){.x = event->x - c->bw,
 				.y = event->y - c->bw, .width = event->width + c->bw * 2,
 				.height = event->height + c->bw * 2}, 0);
