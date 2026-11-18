@@ -918,6 +918,7 @@ buttonpress(struct wl_listener *listener, void *data)
 	Client *c = NULL, *fc = NULL;
 	LayerSurface *l = NULL, *fl = NULL;
 	const Button *b;
+	struct wlr_box geom;
 
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
 	handlecursoractivity();
@@ -981,7 +982,10 @@ buttonpress(struct wl_listener *listener, void *data)
 			motionnotify(0, NULL, 0, 0, 0, 0);
 			/* Drop the window off on its new monitor */
 			selmon = xytomon(cursor->x, cursor->y);
+			geom = grabc->geom;
 			setmon(grabc, selmon, 0);
+			if (grabc->mon && !grabc->isfullscreen && !wlr_box_equal(&geom, &grabc->geom))
+				resize(grabc, geom, 0);
 			grabc = NULL;
 			return;
 		}
@@ -3348,8 +3352,10 @@ setmon(Client *c, Monitor *m, uint32_t newtags)
 		/* Make sure window actually overlaps with the monitor */
 		resize(c, c->geom, 0);
 		c->tags = newtags ? newtags : m->tagset[m->seltags]; /* assign tags of target monitor */
-		c->prev.x = (m->w.width - c->prev.width) / 2 + m->m.x;
-		c->prev.y = (m->w.height - c->prev.height) / 2 + m->m.y;
+		c->prev.x = (m->w.width - c->prev.width) / 2 + m->w.x;
+		c->prev.y = (m->w.height - c->prev.height) / 2 + m->w.y;
+		if (!c->isfullscreen)
+			resize(c, c->prev, 0);
 		setfullscreen(c, c->isfullscreen); /* This will call arrange(c->mon) */
 		setfloating(c, c->isfloating);
 	}
