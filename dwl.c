@@ -346,7 +346,6 @@ static void createpointerconstraint(struct wl_listener *listener, void *data);
 static void createpopup(struct wl_listener *listener, void *data);
 static void cursorconstrain(struct wlr_pointer_constraint_v1 *constraint);
 static void cursorframe(struct wl_listener *listener, void *data);
-static void cursorsurfacedestroy(struct wl_listener *listener, void *data);
 static void cursorwarptohint(void);
 static void destroybackend(struct wl_listener *listener, void *data);
 static void destroydecoration(struct wl_listener *listener, void *data);
@@ -372,9 +371,6 @@ static Client *focustop(Monitor *m);
 static void forgetoffmons(void);
 static void fullscreennotify(struct wl_listener *listener, void *data);
 static void gpureset(struct wl_listener *listener, void *data);
-static void handlecursoractivity(void);
-static int hidecursor(void *data);
-static void trackcursorsurface(struct wlr_surface *surface);
 static void handlesig(int signo);
 static void incnmaster(const Arg *arg);
 static void inputdevice(struct wl_listener *listener, void *data);
@@ -455,6 +451,11 @@ static void xytonode(double x, double y, struct wlr_surface **psurface,
 static void zoom(const Arg *arg);
 static void region(const Arg *arg);
 static void entermode(const Arg *arg);
+static void cursorsurfacedestroy(struct wl_listener *listener, void *data);
+static void handlecursoractivity(void);
+static int hidecursor(void *data);
+static void setxcursor(enum wp_cursor_shape_device_v1_shape shape);
+static void trackcursorsurface(struct wlr_surface *surface);
 
 /* variables */
 static pid_t child_pid = -1;
@@ -2869,8 +2870,8 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	/* If there's no client surface under the cursor, set the cursor image to a
 	 * default. This is what makes the cursor image appear when you move it
 	 * off of a client or over its border. */
-	if (!surface && !seat->drag && !cursor_hidden)
-		wlr_cursor_set_xcursor(cursor, cursor_mgr, "default");
+	if (!surface && !seat->drag)
+		setxcursor(WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT);
 
 	pointerfocus(c, l, surface, sx, sy, time);
 
@@ -2909,7 +2910,7 @@ moveresize(const Arg *arg)
 	case CurMove:
 		grabcx = (int)round(cursor->x) - grabc->geom.x;
 		grabcy = (int)round(cursor->y) - grabc->geom.y;
-		wlr_cursor_set_xcursor(cursor, cursor_mgr, "all-scroll");
+		setxcursor(WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ALL_SCROLL);
 		break;
 	case CurResize:
 		/* Doesn't work for X11 output - the next absolute motion event
@@ -2917,7 +2918,7 @@ moveresize(const Arg *arg)
 		wlr_cursor_warp_closest(cursor, NULL,
 				grabc->geom.x + grabc->geom.width,
 				grabc->geom.y + grabc->geom.height);
-		wlr_cursor_set_xcursor(cursor, cursor_mgr, "se-resize");
+		setxcursor(WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_SE_RESIZE);
 		break;
 	}
 }
@@ -3213,7 +3214,7 @@ run(char *startup_cmd)
 	 * initialized, as the image/coordinates are not transformed for the
 	 * monitor when displayed here */
 	wlr_cursor_warp_closest(cursor, NULL, cursor->x, cursor->y);
-	wlr_cursor_set_xcursor(cursor, cursor_mgr, "default");
+	setxcursor(WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT);
 	handlecursoractivity();
 
 	/* Run the Wayland event loop. This does not return until you exit the
@@ -3259,14 +3260,8 @@ setcursorshape(struct wl_listener *listener, void *data)
 	/* This can be sent by any client, so we check to make sure this one
 	 * actually has pointer focus first. If so, we can tell the cursor to
 	 * use the provided cursor shape. */
-	if (event->seat_client == seat->pointer_state.focused_client) {
-		last_cursor.shape = event->shape;
-		trackcursorsurface(NULL);
-
-		if (!cursor_hidden)
-			wlr_cursor_set_xcursor(cursor, cursor_mgr,
-					wlr_cursor_shape_v1_name(event->shape));
-	}
+	if (event->seat_client == seat->pointer_state.focused_client)
+		setxcursor(event->shape);
 }
 
 void
@@ -4457,12 +4452,11 @@ handlecursoractivity(void)
 	else if (last_cursor.surface)
 		wlr_cursor_set_surface(cursor, last_cursor.surface,
 				last_cursor.hotspot_x, last_cursor.hotspot_y);
-	else
-		wlr_cursor_set_xcursor(cursor, cursor_mgr, "default");
+
 
 	/* Note that calling the functions below instead of manually saving the last
 	 * cursor causes issues like making the cursor warp when clicking ReShade's
-	 * menu, or can duplicate the cursor in the top left corner. */
+	 * menu. */
 	// wlr_seat_pointer_clear_focus(seat);
 	// motionnotify(0, NULL, 0, 0, 0, 0);
 }
@@ -4477,6 +4471,17 @@ hidecursor(void *data)
 	// wlr_seat_pointer_clear_focus(seat);
 	cursor_hidden = true;
 	return 0;
+}
+
+void
+setxcursor(enum wp_cursor_shape_device_v1_shape shape)
+{
+	last_cursor.shape = shape;
+	trackcursorsurface(NULL);
+
+	if (!cursor_hidden)
+		wlr_cursor_set_xcursor(cursor, cursor_mgr,
+				wlr_cursor_shape_v1_name(shape));
 }
 
 void
