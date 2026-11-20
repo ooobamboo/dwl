@@ -27,6 +27,8 @@ This branch is upstream dwl plus the following patches:
 - **moveresizekb** — move/resize floating windows with the keyboard
 - **pertag** — per-tag layout, mfact and nmaster
 - **regions** — pass window geometry to a program on stdin
+- **scale-snap** — keep surfaces on the physical pixel grid, so fractional
+  output scales stay sharp instead of being resampled by one pixel
 - **swapandfocusdir** — directional focus and swap
 
 Each patch is maintained on its own `feat/<name>` branch and merged into
