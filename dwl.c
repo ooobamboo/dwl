@@ -366,6 +366,7 @@ static void setmonoff(struct wlr_output *wlr_output, int off);
 static void setpsel(struct wl_listener *listener, void *data);
 static void setsel(struct wl_listener *listener, void *data);
 static void setup(void);
+static int snapphysical(int pos, int off, float scale);
 static struct wlr_scene_node *snapshot(struct wlr_scene_node *node,
 		struct wlr_scene_tree *parent, void *data);
 static void spawn(const Arg *arg);
@@ -2613,6 +2614,43 @@ requestmonstate(struct wl_listener *listener, void *data)
 	updatemons(NULL, NULL);
 }
 
+/* wlroots derives the physical size of a surface as
+ *
+ *     round((x + w) * scale) - round(x * scale)
+ *
+ * which matches the buffer size chosen by the client, round(w * scale), only
+ * when x * scale is a whole number of physical pixels.  Otherwise the surface
+ * is resampled by one pixel with the bilinear filter and looks blurry; with a
+ * fractional scale factor this happens to roughly half of all window sizes.
+ * Snapping the position of a window - its surface starts borderpx inside of it
+ * - to the physical pixel grid avoids the resampling altogether.
+ *
+ * Returns pos when it is already on the grid, or when no nearby position is. */
+int
+snapphysical(int pos, int off, float scale)
+{
+	/* At an integer scale factor every logical pixel is a physical pixel. */
+	if (!(scale > 0.0f) || floorf(scale) == scale)
+		return pos;
+
+	/* The period of the grid is the smallest p for which p * scale is
+	 * integral; the scale factors in use have small ones (1.25 -> 4,
+	 * 1.5 -> 2, 1.2 -> 5).  Prefer moving up/left when both directions
+	 * need the same distance: a window at the edge of the usable area then
+	 * keeps its border off-screen instead of leaving a gap. */
+	for (int d = 0; d <= 4; d++) {
+		for (int i = 0; i < (d ? 2 : 1); i++) {
+			int cand = pos + (d ? (i ? d : -d) : 0);
+			float p = (cand + off) * scale;
+
+			if (fabsf(p - roundf(p)) < 1e-3f)
+				return cand;
+		}
+	}
+
+	return pos;
+}
+
 void
 resize(Client *c, struct wlr_box geo, int interact)
 {
@@ -2627,6 +2665,11 @@ resize(Client *c, struct wlr_box geo, int interact)
 	client_set_bounds(c, geo.width, geo.height);
 	c->geom = geo;
 	applybounds(c, bbox);
+
+	/* Keep the surface (which sits c->bw inside the window) on the physical
+	 * pixel grid so that the compositor shows it without resampling. */
+	c->geom.x = snapphysical(c->geom.x, (int)c->bw, c->mon->wlr_output->scale);
+	c->geom.y = snapphysical(c->geom.y, (int)c->bw, c->mon->wlr_output->scale);
 
 	if ((serial = client_set_size(c, c->geom.width - 2 * c->bw,
 			c->geom.height - 2 * c->bw)))
