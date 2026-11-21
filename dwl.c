@@ -1491,7 +1491,10 @@ createmon(struct wl_listener *listener, void *data)
 			m->lt[0] = r->lt;
 			m->lt[1] = &layouts[LENGTH(layouts) > 1 && r->lt != &layouts[1]];
 			strncpy(m->ltsymbol, m->lt[m->sellt]->symbol, sizeof(m->ltsymbol));
-			wlr_output_state_set_scale(&state, r->scale);
+			/* Match the scale clients are told about, so that the
+			 * physical pixel grid is the same on both sides. */
+			wlr_output_state_set_scale(&state,
+				roundf(r->scale * 120.0f) / 120.0f);
 			wlr_output_state_set_transform(&state, r->rr);
 			break;
 		}
@@ -3138,36 +3141,33 @@ requestmonstate(struct wl_listener *listener, void *data)
  *     round((x + w) * scale) - round(x * scale)
  *
  * which matches the buffer size chosen by the client, round(w * scale), only
- * when x * scale is a whole number of physical pixels.  Otherwise the surface
- * is resampled by one pixel with the bilinear filter and looks blurry; with a
- * fractional scale factor this happens to roughly half of all window sizes.
- * Snapping the position of a window - its surface starts borderpx inside of it
- * - to the physical pixel grid avoids the resampling altogether.
+ * when x * scale is a whole number of physical pixels; otherwise the surface
+ * is resampled with the bilinear filter and looks blurry.  Snapping a window
+ * to that grid - its surface starts borderpx inside of it - avoids this.
  *
- * Returns pos when it is already on the grid, or when no nearby position is. */
+ * The grid is the one the client is told about, round(scale * 120) / 120, so
+ * that both sides agree for any scale factor. */
 int
 snapphysical(int pos, int off, float scale)
 {
+	int s120, step, g, b;
+
 	/* At an integer scale factor every logical pixel is a physical pixel. */
 	if (!(scale > 0.0f) || floorf(scale) == scale)
 		return pos;
 
-	/* The period of the grid is the smallest p for which p * scale is
-	 * integral; the scale factors in use have small ones (1.25 -> 4,
-	 * 1.5 -> 2, 1.2 -> 5).  Prefer moving up/left when both directions
-	 * need the same distance: a window at the edge of the usable area then
-	 * keeps its border off-screen instead of leaving a gap. */
-	for (int d = 0; d <= 4; d++) {
-		for (int i = 0; i < (d ? 2 : 1); i++) {
-			int cand = pos + (d ? (i ? d : -d) : 0);
-			float p = (cand + off) * scale;
+	/* The grid repeats every 120 / gcd(s120, 120) logical pixels: 1.25 -> 4,
+	 * 4/3 -> 3, 1.2 -> 5, 1.1 -> 10. */
+	s120 = (int)lroundf(scale * 120.0f);
+	for (g = s120, b = 120; b; ) {
+		int t = g % b;
 
-			if (fabsf(p - roundf(p)) < 1e-3f)
-				return cand;
-		}
+		g = b;
+		b = t;
 	}
+	step = 120 / g;
 
-	return pos;
+	return (int)(lround((double)(pos + off) / step) * step) - off;
 }
 
 void
