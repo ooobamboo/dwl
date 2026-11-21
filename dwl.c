@@ -415,6 +415,7 @@ static void setmonoff(struct wlr_output *wlr_output, int off);
 static void setpsel(struct wl_listener *listener, void *data);
 static void setsel(struct wl_listener *listener, void *data);
 static void setup(void);
+static float clientscale(float scale);
 static int snapphysical(int pos, int off, float scale);
 static struct wlr_scene_node *snapshot(struct wlr_scene_node *node,
 		struct wlr_scene_tree *parent, void *data);
@@ -1491,10 +1492,7 @@ createmon(struct wl_listener *listener, void *data)
 			m->lt[0] = r->lt;
 			m->lt[1] = &layouts[LENGTH(layouts) > 1 && r->lt != &layouts[1]];
 			strncpy(m->ltsymbol, m->lt[m->sellt]->symbol, sizeof(m->ltsymbol));
-			/* Match the scale clients are told about, so that the
-			 * physical pixel grid is the same on both sides. */
-			wlr_output_state_set_scale(&state,
-				roundf(r->scale * 120.0f) / 120.0f);
+			wlr_output_state_set_scale(&state, clientscale(r->scale));
 			wlr_output_state_set_transform(&state, r->rr);
 			break;
 		}
@@ -2946,10 +2944,15 @@ outputmgrapplyortest(struct wlr_output_configuration_v1 *config, int test)
 	struct wlr_output_configuration_head_v1 *config_head;
 	size_t states_len, i;
 	struct wlr_output_swapchain_manager swapchain_manager;
-	struct wlr_backend_output_state *states =
-		wlr_output_configuration_v1_build_state(config, &states_len);
+	struct wlr_backend_output_state *states;
 	int ok = 0;
 
+	/* The scale a client asks for is a 1/256 fixed point number, so round it
+	 * like we round the one from the config file. */
+	wl_list_for_each(config_head, &config->heads, link)
+		config_head->state.scale = clientscale(config_head->state.scale);
+
+	states = wlr_output_configuration_v1_build_state(config, &states_len);
 	if (!states) {
 		wlr_output_configuration_v1_send_failed(config);
 		return;
@@ -3136,6 +3139,15 @@ requestmonstate(struct wl_listener *listener, void *data)
 	updatemons(NULL, NULL);
 }
 
+/* Fractional scale is a 1/120 protocol, so this is the value clients are told
+ * about.  Use it for our own geometry and for the output as well: the buffers
+ * they render then land on the physical pixel grid unchanged. */
+static float
+clientscale(float scale)
+{
+	return roundf(scale * 120.0f) / 120.0f;
+}
+
 /* wlroots derives the physical size of a surface as
  *
  *     round((x + w) * scale) - round(x * scale)
@@ -3150,14 +3162,15 @@ requestmonstate(struct wl_listener *listener, void *data)
 int
 snapphysical(int pos, int off, float scale)
 {
-	int s120, step, g, b;
+	int s120, step, g, b, d;
 
 	/* At an integer scale factor every logical pixel is a physical pixel. */
 	if (!(scale > 0.0f) || floorf(scale) == scale)
 		return pos;
 
 	/* The grid repeats every 120 / gcd(s120, 120) logical pixels: 1.25 -> 4,
-	 * 4/3 -> 3, 1.2 -> 5, 1.1 -> 10. */
+	 * 4/3 -> 3, 1.2 -> 5, 1.1 -> 10.  Move to the closest point on it, ties
+	 * up/left so that a window at the edge of the area keeps its border. */
 	s120 = (int)lroundf(scale * 120.0f);
 	for (g = s120, b = 120; b; ) {
 		int t = g % b;
@@ -3166,8 +3179,16 @@ snapphysical(int pos, int off, float scale)
 		b = t;
 	}
 	step = 120 / g;
+	d = (int)(ceil((double)(pos + off) / step - 0.5) * step) - (pos + off);
 
-	return (int)(lround((double)(pos + off) / step) * step) - off;
+	/* Only nudge: where the grid is coarse - 1.1 repeats every 10 logical
+	 * pixels, and a scale that a client cannot express in 1/120 can repeat
+	 * much further - moving a window to the closest point would tear the
+	 * layout apart. */
+	if (d < -4 || d > 4)
+		return pos;
+
+	return pos + d;
 }
 
 void
